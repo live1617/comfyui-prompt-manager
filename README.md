@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.1.0-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.1.1-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -103,6 +103,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.1.1 | 2026-09-23 | 兜底扫描：每 1.5 秒自动检测节点内尚未挂载工具条的 textarea（含第三方插件动态添加、延迟生成的控件）并自动补挂，加载/保存直接读写 textarea |
 | 1.1.0 | 2026-09-23 | 挂载范围不再仅限 nodeData 声明的 multiline STRING，改为逐控件检测（customtext / string / multiline STRING / textarea 元素 / 子图代理控件 resolveDeepest）；多文本框节点按控件序号精确匹配 textarea，修复错位；文本读写支持动态代理控件 |
 | 1.0.0 | 2026-09-23 | 首个正式发布版：全局注入工具条（列表/保存/删除/设置）、SQLite 存储、导入/导出、透明度与显示位置设置、最低透明度保护 |
 

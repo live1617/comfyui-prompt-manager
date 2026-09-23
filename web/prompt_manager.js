@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.1.0";
+const PM_VERSION = "1.1.1";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -66,6 +66,7 @@ function findWidget(target) {
 }
 
 function getWidgetText(target) {
+    if (target?.textarea && target.textarea.isConnected) return target.textarea.value ?? "";
     const w = resolveDeepestWidget(findWidget(target));
     if (!w) return "";
     const el = w.inputEl || w.element;
@@ -74,6 +75,12 @@ function getWidgetText(target) {
 }
 
 function setWidgetText(target, text) {
+    if (target?.textarea && target.textarea.isConnected) {
+        target.textarea.value = text;
+        target.textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        app.graph.setDirtyCanvas(true, true);
+        return;
+    }
     const w = resolveDeepestWidget(findWidget(target));
     if (!w) return;
     w.value = text;
@@ -588,16 +595,8 @@ function injectToolbars(node, attempt = 0) {
     }
 }
 
-function addToolbar(node, widget) {
-    if (!node || !widget) return;
-    node._pmToolbars = node._pmToolbars || {};
-    const key = widget.name || widget.id || `w${(node.widgets || []).indexOf(widget)}`;
-    if (node._pmToolbars[key]) return;
-    node._pmToolbars[key] = true;
-
-    const target = { node, widget, widgetName: widget.name };
-    const buttons = [
-
+function makeToolbarButtons(target) {
+    return [
         [
             PM_ICONS.list,
             "提示词列表 (点击名称即加载)",
@@ -615,8 +614,17 @@ function addToolbar(node, widget) {
             () => openPromptDialog(target, "delete"),
         ],
     ];
+}
 
-    const toolbar = createToolbarElement(buttons);
+function addToolbar(node, widget) {
+    if (!node || !widget) return;
+    node._pmToolbars = node._pmToolbars || {};
+    const key = widget.name || widget.id || `w${(node.widgets || []).indexOf(widget)}`;
+    if (node._pmToolbars[key]) return;
+    node._pmToolbars[key] = true;
+
+    const target = { node, widget, widgetName: widget.name };
+    const toolbar = createToolbarElement(makeToolbarButtons(target));
     mountToolbar(node, widget, toolbar.el).then((ok) => {
         if (ok) {
             keepToolbarMounted(node, widget, toolbar.el);
@@ -1096,4 +1104,61 @@ function keepToolbarMounted(node, widget, el) {
         tryMountToolbar(node, widget, el);
     }, 1500);
 }
+
+function addToolbarToTextarea(node, ta) {
+    if (!node || !ta || !ta.isConnected) return;
+    const host = ta.closest(".p-floatlabel, [class*='floatlabel']") || ta.parentElement;
+    if (!host) return;
+    if (host.querySelector(".pm-toolbar")) return;
+    const toolbar = createToolbarElement(makeToolbarButtons({ node, textarea: ta }));
+    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+    host.appendChild(toolbar.el);
+    ta._pmToolbarMounted = true;
+    toolbar.el.classList.remove("pm-anchor");
+    toolbar.el.style.zIndex = "20";
+    const timer = setInterval(() => {
+        if (toolbar.el.isConnected) return;
+        if (!node.graph || !ta.isConnected) {
+            clearInterval(timer);
+            return;
+        }
+        const h =
+            ta.closest(".p-floatlabel, [class*='floatlabel']") || ta.parentElement;
+        if (h && !h.querySelector(".pm-toolbar")) {
+            if (getComputedStyle(h).position === "static")
+                h.style.position = "relative";
+            h.appendChild(toolbar.el);
+        }
+    }, 1500);
+}
+
+function sweepTextareas() {
+    try {
+        const tas = document.querySelectorAll(
+            "[data-node-id] textarea, .dom-widget textarea"
+        );
+        for (const ta of tas) {
+            if (!ta.isConnected || ta._pmToolbarMounted) continue;
+            const nodeEl = ta.closest("[data-node-id]");
+            const domWidget = ta.closest(".dom-widget");
+            if (!nodeEl && !domWidget) continue;
+            const nodeId = nodeEl ? parseInt(nodeEl.dataset.nodeId, 10) : NaN;
+            const node = Number.isFinite(nodeId)
+                ? app.graph?.getNodeById?.(nodeId)
+                : null;
+            if (!node) continue;
+            const widget = (node.widgets || []).find((w) => {
+                const r = resolveDeepestWidget(w);
+                return r.inputEl === ta || r.element === ta;
+            });
+            if (widget) {
+                addToolbar(node, widget);
+            } else {
+                addToolbarToTextarea(node, ta);
+            }
+        }
+    } catch (e) {}
+}
+
+setInterval(sweepTextareas, 1500);
 
