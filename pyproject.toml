@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-prompt-manager"
 description = "Global prompt manager for ComfyUI - a floating toolbar injected into every multiline text widget, with SQLite storage, import/export and settings. No custom node required."
-version = "1.1.1"
+version = "1.1.2"
 license = { text = "MIT" }
 requires-python = ">=3.8"
 dependencies = []

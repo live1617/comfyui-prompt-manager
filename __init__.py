@@ -8,7 +8,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:

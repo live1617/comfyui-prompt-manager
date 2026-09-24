@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.1.1";
+const PM_VERSION = "1.1.2";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -187,6 +187,7 @@ async function reloadDialogItems(d) {
         const data = await apiGet("/prompt_manager/all");
         if (!ensureDialogAlive(d)) return;
         d.items = data.items || [];
+        pmNameCacheReset(d.items.map((i) => i.name));
     } catch (e) {
 
         try {
@@ -197,6 +198,7 @@ async function reloadDialogItems(d) {
                 preview: "",
                 text_len: 0,
             }));
+            pmNameCacheReset(data.names || []);
         } catch (e2) {
             if (!ensureDialogAlive(d)) return;
             d.items = [];
@@ -290,6 +292,7 @@ async function deletePromptWithConfirm(d, name) {
     try {
         await apiPost("/prompt_manager/delete", { name });
         toast(`已删除: ${name}`);
+        pmNameCacheRemove(name);
         if (ensureDialogAlive(d)) await reloadDialogItems(d);
     } catch (e) {
         toast(e.message, false);
@@ -310,6 +313,99 @@ async function loadPromptInto(target, name) {
 
 let _pmSaveDialog = null;
 let _lastSaveName = "";
+let _pmNameCache = null;
+let _pmConfirmOpen = false;
+
+async function pmKnownNames() {
+    if (_pmNameCache) return _pmNameCache;
+    try {
+        const data = await apiGet("/prompt_manager/list");
+        _pmNameCache = data.names || [];
+    } catch (e) {
+        _pmNameCache = [];
+    }
+    return _pmNameCache;
+}
+
+function pmNameCacheAdd(name) {
+    if (!_pmNameCache) return;
+    if (!_pmNameCache.includes(name)) _pmNameCache.push(name);
+}
+
+function pmNameCacheRemove(name) {
+    if (!_pmNameCache) return;
+    _pmNameCache = _pmNameCache.filter((n) => n !== name);
+}
+
+function pmNameCacheReset(names) {
+    _pmNameCache = Array.isArray(names) ? names : null;
+}
+
+function confirmOverwrite(name) {
+    return new Promise((resolve) => {
+        ensureStyles();
+        _pmConfirmOpen = true;
+        const mask = document.createElement("div");
+        mask.className = "pm-mask";
+        mask.style.zIndex = "100001";
+        const dlg = document.createElement("div");
+        dlg.className = "pm-dialog pm-dialog-sm";
+
+        const head = document.createElement("div");
+        head.className = "pm-dialog-head";
+        const title = document.createElement("div");
+        title.className = "pm-dialog-title";
+        title.textContent = "名称已存在";
+        head.appendChild(title);
+
+        const body = document.createElement("div");
+        body.className = "pm-dialog-body";
+        const msg = document.createElement("div");
+        msg.className = "pm-dialog-hint";
+        msg.style.padding = "0";
+        msg.textContent = `提示词 "${name}" 已存在, 保存会覆盖它原来的内容, 是否继续？`;
+
+        const actions = document.createElement("div");
+        actions.className = "pm-dialog-actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "pm-btn";
+        cancel.textContent = "取消";
+        const ok = document.createElement("button");
+        ok.type = "button";
+        ok.className = "pm-btn pm-btn-primary";
+        ok.textContent = "覆盖保存";
+        actions.append(cancel, ok);
+        body.append(msg, actions);
+        dlg.append(head, body);
+        mask.appendChild(dlg);
+        document.body.appendChild(mask);
+
+        const finish = (v) => {
+            document.removeEventListener("keydown", onKey, true);
+            _pmConfirmOpen = false;
+            try {
+                mask.remove();
+            } catch (e) {
+            }
+            resolve(v);
+        };
+        const onKey = (e) => {
+            if (e.key === "Escape") {
+                e.stopPropagation();
+                finish(false);
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        cancel.addEventListener("click", () => finish(false));
+        ok.addEventListener("click", () => finish(true));
+        mask.addEventListener("mousedown", (e) => {
+            if (e.target === mask) finish(false);
+        });
+        dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+        setTimeout(() => ok.focus(), 30);
+    });
+}
 
 function closeSaveDialog() {
     if (!_pmSaveDialog) return;
@@ -365,7 +461,7 @@ function saveWithDialog(target) {
     input.value = _lastSaveName;
     const info = document.createElement("div");
     info.className = "pm-dialog-hint";
-    info.textContent = `将保存当前文本 (共 ${text.length} 个字符), 同名会覆盖`;
+    info.textContent = `将保存当前文本 (共 ${text.length} 个字符), 同名保存会先询问是否覆盖`;
     info.style.padding = "0";
 
     const actions = document.createElement("div");
@@ -386,14 +482,14 @@ function saveWithDialog(target) {
     document.body.appendChild(mask);
 
     const onKey = (e) => {
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !_pmConfirmOpen) {
             e.stopPropagation();
             closeSaveDialog();
         }
     };
     document.addEventListener("keydown", onKey, true);
     mask.addEventListener("mousedown", (e) => {
-        if (e.target === mask) closeSaveDialog();
+        if (e.target === mask && !_pmConfirmOpen) closeSaveDialog();
     });
     dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
 
@@ -406,9 +502,19 @@ function saveWithDialog(target) {
             input.focus();
             return toast("请输入保存名称", false);
         }
+        const names = await pmKnownNames();
+        if (names.includes(name)) {
+            const yes = await confirmOverwrite(name);
+            if (!yes) {
+                input.focus();
+                input.select();
+                return;
+            }
+        }
         try {
             await apiPost("/prompt_manager/save", { name, text });
             _lastSaveName = name;
+            pmNameCacheAdd(name);
             toast(`已保存: ${name}`);
             closeSaveDialog();
         } catch (e) {
