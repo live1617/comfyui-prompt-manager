@@ -1,20 +1,23 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.1.2-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.2.5-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
 ## 使用方式
 
-把鼠标移到文本框左下角的 ✏️ 小图标上，工具条会向右展开：
+平时文本框角落只有一个 💾 保存小图标，鼠标移上去工具条会展开：
 
-- **☰ 列表** —— 打开提示词库对话框：搜索 + 名称/内容预览，**点击名称即加载到当前文本框**
-- ｜
-- **🔖 保存** —— 弹出名称输入框（记住上次用的名称），把当前文本框内容存入数据库，同名覆盖
-- **🗑️ 删除** —— 打开对话框的删除模式，点击名称即删除（有确认）；列表项悬停时右侧也有删除小图标
+- **💾 保存**（收起态的主图标，点击即保存）—— 弹出「名称 + 分类」输入（记住上次用的），把当前文本框内容存入数据库，同名覆盖
+  - 分类是和列表弹窗同一套横向标签页：直接点选已有分类，点「+」可新建
+  - 输入已存在的名称时会自动带出它原来的分类；保存时若同名已存在会先弹确认框
+- **☰ 列表** —— 打开提示词库对话框：搜索 + 分类标签页 + 名称/内容预览，**点击名称即加载到当前文本框**
+- **📤 移动** —— 列表弹窗里每条提示词悬停时会出现移动按钮（删除按钮左边），
+  点开分类标签选择器（也能「+」新建），点击目标分类即把该条提示词移过去
+- **🗑️ 删除** —— 在列表弹窗里操作：悬停条目显示删除小图标，或打开对话框的删除模式（有确认）
 - ｜
 - **⚙ 设置** —— 打开工具条设置面板：
-  - **透明度**：滑块调节图标平时的不透明度（10%~100%），拖动即时生效
+  - **透明度**：滑块调节图标平时的不透明度，拖动即时生效
   - **显示位置**：左下（默认）/ 右下 / 左上 / 右上 四选一，位置在右侧时工具条自动改为向左展开
   - 设置自动保存（浏览器 localStorage），对所有文本框的工具条全局生效
 
@@ -55,11 +58,18 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 > Prompt Manager 节点会显示为缺失节点，删掉它、改用任意文本节点 + 工具条即可；
 > 数据库数据完全通用，无需迁移。
 
+## 分类
+
+- 保存时选分类（默认 = 「默认」分类），列表按分类管理提示词
+- 列表弹窗顶部有分类筛选条（全部 + 各分类，带数量），列表按分类分组显示，条目上会显示所属分类标签
+- 分类存在数据库里，导出/导入的 JSON 会带上 `category` 字段
+- 旧版本升级：插件启动时自动给数据表加 `category` 列，已有提示词归到「默认」分类，数据不丢
+
 ## 数据库
 
 - 数据库文件：`custom_nodes/comfyui-prompt-manager/prompt_manager.db`（SQLite，首次保存时自动创建）
-- 数据表：`prompts(name 唯一, text, created_at, updated_at)`
-- 同名保存会覆盖旧内容
+- 数据表：`prompts(name 唯一, text, category, created_at, updated_at)`
+- 同名保存会覆盖旧内容（并更新它所属的分类）
 
 ## 外观微调
 
@@ -70,11 +80,13 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/prompt_manager/save` | `{name, text}` 保存/覆盖 |
+| POST | `/prompt_manager/save` | `{name, text, category}` 保存/覆盖 |
 | POST | `/prompt_manager/load` | `{name}` 读取内容 |
 | POST | `/prompt_manager/delete` | `{name}` 删除 |
 | GET  | `/prompt_manager/list` | 全部名称 |
-| GET  | `/prompt_manager/all` | 列表弹窗用：名称 + 内容预览 + 长度 + 更新时间 |
+| GET  | `/prompt_manager/categories` | 分类列表（含数量） |
+| GET  | `/prompt_manager/all` | 列表弹窗用：名称 + 分类 + 内容预览 + 长度 + 更新时间 |
+| POST | `/prompt_manager/move` | `{name, category}` 修改提示词所属分类 |
 | GET  | `/prompt_manager/export` | 导出 JSON（附件下载） |
 | POST | `/prompt_manager/import` | multipart 上传 JSON 导入 |
 | GET  | `/prompt_manager/version` | 插件版本号 |
@@ -103,6 +115,12 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.2.5 | 2026-09-26 | 工具条精简：保存（软盘）成为收起态主图标、点击即保存并排在展开后第一位，移除删除按钮和原有的笔形触发图标（删除统一在列表弹窗里做） |
+| 1.2.4 | 2026-09-26 | 列表条目新增「移动」按钮（删除按钮左侧）：弹出分类标签选择器（可新建分类），一键把提示词移到目标分类；后端新增 POST /prompt_manager/move 接口 |
+| 1.2.3 | 2026-09-26 | 保存弹窗的分类也改成横向标签页（与列表弹窗一致）：点选已有分类、「+」新建，移除旧的输入框+下拉选择器 |
+| 1.2.2 | 2026-09-26 | 列表弹窗分类改为横向标签页（仿提示词小助手标签栏）：选中项白色高亮 + 底部蓝色指示条，点击标签只显示该分类，右侧「+」可新建空分类；保存弹窗下拉同步包含空分类 |
+| 1.2.1 | 2026-09-26 | 分类选择改成 ComfyUI 原生风格下拉弹层：保存弹窗点 ▾ 弹出分类列表（可输入自定义），列表弹窗改为「分类」下拉选择器，点选后只显示该分类内容 |
+| 1.2.0 | 2026-09-26 | 支持自定义分类：保存时可填分类（已有分类自动提示），列表弹窗支持分类筛选与分组显示，条目显示分类标签；数据库自动迁移新增 category 列，导出/导入带分类 |
 | 1.1.2 | 2026-09-25 | 保存覆盖提示：同名已存在时弹出确认框（取消 / 覆盖保存），缓存提示词名称并在列表刷新、删除时同步 |
 | 1.1.1 | 2026-09-23 | 兜底扫描：每 1.5 秒自动检测节点内尚未挂载工具条的 textarea（含第三方插件动态添加、延迟生成的控件）并自动补挂，加载/保存直接读写 textarea |
 | 1.1.0 | 2026-09-23 | 挂载范围不再仅限 nodeData 声明的 multiline STRING，改为逐控件检测（customtext / string / multiline STRING / textarea 元素 / 子图代理控件 resolveDeepest）；多文本框节点按控件序号精确匹配 textarea，修复错位；文本读写支持动态代理控件 |

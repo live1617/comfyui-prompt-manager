@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.1.2";
+const PM_VERSION = "1.2.5";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -111,6 +111,7 @@ function ensureDialogAlive(d) {
     return _pmDialog === d && d.mask.isConnected;
 }
 
+
 async function openPromptDialog(target, mode = "load") {
     closePromptDialog();
     closeSaveDialog();
@@ -152,10 +153,13 @@ async function openPromptDialog(target, mode = "load") {
             ? "点击名称或右侧图标删除该提示词"
             : "点击名称即可加载到当前文本框";
 
+    const catBar = document.createElement("div");
+    catBar.className = "pm-cat-bar";
+
     const list = document.createElement("div");
     list.className = "pm-dialog-list";
 
-    dlg.append(head, searchWrap, hint, list);
+    dlg.append(head, searchWrap, catBar, hint, list);
     mask.appendChild(dlg);
     document.body.appendChild(mask);
 
@@ -172,13 +176,20 @@ async function openPromptDialog(target, mode = "load") {
 
     dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
 
-    const d = { mask, dlg, list, search, mode, target, items: null, onKey };
+    const d = { mask, dlg, list, catBar, search, mode, target, items: null, onKey, category: "", extraCats: [] };
     _pmDialog = d;
 
     search.addEventListener("input", () => renderDialogList(d));
     renderDialogList(d);
 
     await reloadDialogItems(d);
+    pmServerCategories().then((server) => {
+        if (!ensureDialogAlive(d)) return;
+        d.extraCats = server.filter(
+            (c) => !(d.items || []).some((it) => pmCategoryOf(it) === c)
+        );
+        renderCategoryBar(d);
+    });
     setTimeout(() => search.focus(), 30);
 }
 
@@ -187,7 +198,7 @@ async function reloadDialogItems(d) {
         const data = await apiGet("/prompt_manager/all");
         if (!ensureDialogAlive(d)) return;
         d.items = data.items || [];
-        pmNameCacheReset(d.items.map((i) => i.name));
+        pmItemsCacheReset(d.items);
     } catch (e) {
 
         try {
@@ -195,17 +206,82 @@ async function reloadDialogItems(d) {
             if (!ensureDialogAlive(d)) return;
             d.items = (data.names || []).map((n) => ({
                 name: n,
+                category: PM_DEFAULT_CATEGORY,
                 preview: "",
                 text_len: 0,
             }));
-            pmNameCacheReset(data.names || []);
+            pmItemsCacheReset(d.items);
         } catch (e2) {
             if (!ensureDialogAlive(d)) return;
             d.items = [];
             toast(`读取列表失败: ${e2.message}`, false);
         }
     }
+    renderCategoryBar(d);
     renderDialogList(d);
+}
+
+function renderCategoryBar(d) {
+    if (!ensureDialogAlive(d)) return;
+    const bar = d.catBar;
+    bar.innerHTML = "";
+    const items = d.items || [];
+    const cats = [];
+    const counts = new Map();
+    for (const it of items) {
+        const c = pmCategoryOf(it);
+        if (!counts.has(c)) {
+            counts.set(c, 0);
+            cats.push(c);
+        }
+        counts.set(c, counts.get(c) + 1);
+    }
+    for (const c of d.extraCats || []) {
+        if (!counts.has(c)) {
+            counts.set(c, 0);
+            cats.push(c);
+        }
+    }
+    if (!items.length && !cats.length) return;
+    if (d.category && !counts.has(d.category)) d.category = "";
+
+    const makeTab = (label, value) => {
+        const t = document.createElement("button");
+        t.type = "button";
+        t.className = "pm-tab" + (d.category === value ? " pm-tab-on" : "");
+        t.textContent = label;
+        t.addEventListener("click", () => {
+            if (d.category === value) return;
+            d.category = value;
+            renderCategoryBar(d);
+            renderDialogList(d);
+        });
+        return t;
+    };
+
+    bar.appendChild(makeTab("全部", ""));
+    for (const c of cats) bar.appendChild(makeTab(c, c));
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "pm-tab pm-tab-add";
+    add.title = "新建分类";
+    add.textContent = "+";
+    add.addEventListener("click", async () => {
+        const name = (await pmInputDialog("新建分类", "输入分类名称...", "") || "").trim();
+        if (!name) return;
+        try {
+            await apiPost("/prompt_manager/categories", { name });
+            if (!(d.extraCats || []).includes(name)) d.extraCats = [...(d.extraCats || []), name];
+            d.category = name;
+            renderCategoryBar(d);
+            renderDialogList(d);
+            toast(`已创建分类: ${name}`);
+        } catch (e) {
+            toast(e.message, false);
+        }
+    });
+    bar.appendChild(add);
 }
 
 function renderDialogList(d) {
@@ -222,13 +298,16 @@ function renderDialogList(d) {
     }
 
     const kw = (d.search.value || "").trim().toLowerCase();
-    const items = kw
+    const kwItems = kw
         ? d.items.filter(
               (it) =>
                   (it.name || "").toLowerCase().includes(kw) ||
                   (it.preview || "").toLowerCase().includes(kw)
           )
         : d.items;
+    const items = d.category
+        ? kwItems.filter((it) => pmCategoryOf(it) === d.category)
+        : kwItems;
 
     if (!items.length) {
         const empty = document.createElement("div");
@@ -240,7 +319,26 @@ function renderDialogList(d) {
         return;
     }
 
-    for (const it of items) list.appendChild(makeDialogRow(d, it));
+    const groups = [];
+    const byCat = new Map();
+    for (const it of items) {
+        const c = pmCategoryOf(it);
+        if (!byCat.has(c)) {
+            byCat.set(c, []);
+            groups.push(c);
+        }
+        byCat.get(c).push(it);
+    }
+
+    for (const c of groups) {
+        if (groups.length > 1 || (d.items.length && c !== PM_DEFAULT_CATEGORY)) {
+            const gh = document.createElement("div");
+            gh.className = "pm-cat-group";
+            gh.textContent = `${c} (${byCat.get(c).length})`;
+            list.appendChild(gh);
+        }
+        for (const it of byCat.get(c)) list.appendChild(makeDialogRow(d, it));
+    }
 }
 
 function makeDialogRow(d, item) {
@@ -261,7 +359,14 @@ function makeDialogRow(d, item) {
     prevEl.className = "pm-item-preview";
     prevEl.textContent = preview ? preview + (truncated ? " …" : "") : "(空内容)";
 
-    main.append(nameEl, prevEl);
+    if (pmCategoryOf(item) !== PM_DEFAULT_CATEGORY) {
+        const catEl = document.createElement("div");
+        catEl.className = "pm-item-cat";
+        catEl.textContent = pmCategoryOf(item);
+        main.append(nameEl, catEl, prevEl);
+    } else {
+        main.append(nameEl, prevEl);
+    }
 
     const del = document.createElement("button");
     del.type = "button";
@@ -275,7 +380,19 @@ function makeDialogRow(d, item) {
         await deletePromptWithConfirm(d, item.name);
     });
 
-    row.append(main, del);
+    const mv = document.createElement("button");
+    mv.type = "button";
+    mv.className = "pm-item-del pm-item-move";
+    mv.title = `移动 "${item.name}" 到其他分类`;
+    mv.innerHTML = PM_ICONS.move;
+    mv.addEventListener("mousedown", (e) => e.preventDefault());
+    mv.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await openMoveDialog(d, item.name);
+    });
+
+    row.append(main, mv, del);
     row.addEventListener("click", async () => {
         if (d.mode === "delete") {
             await deletePromptWithConfirm(d, item.name);
@@ -287,12 +404,124 @@ function makeDialogRow(d, item) {
     return row;
 }
 
+async function openMoveDialog(d, name) {
+    closeSaveDialog();
+    ensureStyles();
+    let current = PM_DEFAULT_CATEGORY;
+    const items = await pmKnownItems();
+    const hit = items.find((i) => i.name === name);
+    if (hit) current = pmCategoryOf(hit);
+
+    const mask = document.createElement("div");
+    mask.className = "pm-mask";
+    mask.style.zIndex = "100002";
+    const dlg = document.createElement("div");
+    dlg.className = "pm-dialog pm-dialog-sm";
+
+    const head = document.createElement("div");
+    head.className = "pm-dialog-head";
+    const title = document.createElement("div");
+    title.className = "pm-dialog-title";
+    title.textContent = `移动「${name}」到分类`;
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "pm-dialog-close";
+    closeBtn.title = "取消 (Esc)";
+    closeBtn.innerHTML = PM_ICONS.close;
+    closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        finish(null);
+    });
+    head.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "pm-dialog-body";
+    const hint = document.createElement("div");
+    hint.className = "pm-dialog-hint";
+    hint.style.padding = "0";
+    hint.textContent = "点击目标分类即可移动";
+    const tabs = document.createElement("div");
+    tabs.className = "pm-cat-bar pm-move-cats";
+    body.append(hint, tabs);
+    dlg.append(head, body);
+    mask.appendChild(dlg);
+    document.body.appendChild(mask);
+
+    _pmConfirmOpen = true;
+    const finish = (v) => {
+        document.removeEventListener("keydown", onKey, true);
+        _pmConfirmOpen = false;
+        try {
+            mask.remove();
+        } catch (e) {
+        }
+        return v;
+    };
+    const onKey = (e) => {
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            finish(null);
+        }
+    };
+    document.addEventListener("keydown", onKey, true);
+    mask.addEventListener("mousedown", (e) => {
+        if (e.target === mask) finish(null);
+    });
+    dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+
+    const renderTabs = async () => {
+        tabs.innerHTML = "";
+        const cats = await pmKnownCategories();
+        for (const c of cats) {
+            const t = document.createElement("button");
+            t.type = "button";
+            t.className = "pm-tab" + (c === current ? " pm-tab-on" : "");
+            t.textContent = c === current ? `${c} (当前)` : c;
+            t.addEventListener("click", async () => {
+                if (c === current) return;
+                try {
+                    await apiPost("/prompt_manager/move", { name, category: c });
+                    pmItemsCacheAdd(name, c);
+                    current = c;
+                    toast(`已移动: ${name} → 「${c}」`);
+                    finish(true);
+                    if (d && ensureDialogAlive(d)) await reloadDialogItems(d);
+                } catch (e) {
+                    toast(e.message, false);
+                }
+            });
+            tabs.appendChild(t);
+        }
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "pm-tab pm-tab-add";
+        add.title = "新建分类";
+        add.textContent = "+";
+        add.addEventListener("click", async () => {
+            const name2 = (await pmInputDialog("新建分类", "输入分类名称...", "") || "").trim();
+            if (!name2) return;
+            try {
+                await apiPost("/prompt_manager/categories", { name: name2 });
+            } catch (e) {
+            }
+            await renderTabs();
+            const t = Array.from(tabs.children).find(
+                (x) => x.textContent === name2
+            );
+            if (t) t.click();
+        });
+        tabs.appendChild(add);
+    };
+    await renderTabs();
+    setTimeout(() => closeBtn.focus(), 30);
+}
+
 async function deletePromptWithConfirm(d, name) {
     if (!confirm(`确定删除提示词 "${name}" 吗？此操作不可撤销。`)) return;
     try {
         await apiPost("/prompt_manager/delete", { name });
         toast(`已删除: ${name}`);
-        pmNameCacheRemove(name);
+        pmItemsCacheRemove(name);
         if (ensureDialogAlive(d)) await reloadDialogItems(d);
     } catch (e) {
         toast(e.message, false);
@@ -313,32 +542,86 @@ async function loadPromptInto(target, name) {
 
 let _pmSaveDialog = null;
 let _lastSaveName = "";
-let _pmNameCache = null;
+let _lastSaveCategory = "";
+let _pmItemsCache = null;
 let _pmConfirmOpen = false;
 
-async function pmKnownNames() {
-    if (_pmNameCache) return _pmNameCache;
+const PM_DEFAULT_CATEGORY = "默认";
+
+function pmCategoryOf(item) {
+    return (item && item.category) || PM_DEFAULT_CATEGORY;
+}
+
+async function pmKnownItems() {
+    if (_pmItemsCache) return _pmItemsCache;
     try {
-        const data = await apiGet("/prompt_manager/list");
-        _pmNameCache = data.names || [];
+        const data = await apiGet("/prompt_manager/all");
+        _pmItemsCache = (data.items || []).map((i) => ({
+            name: i.name,
+            category: pmCategoryOf(i),
+        }));
     } catch (e) {
-        _pmNameCache = [];
+        try {
+            const data = await apiGet("/prompt_manager/list");
+            _pmItemsCache = (data.names || []).map((n) => ({
+                name: n,
+                category: PM_DEFAULT_CATEGORY,
+            }));
+        } catch (e2) {
+            _pmItemsCache = [];
+        }
     }
-    return _pmNameCache;
+    return _pmItemsCache;
 }
 
-function pmNameCacheAdd(name) {
-    if (!_pmNameCache) return;
-    if (!_pmNameCache.includes(name)) _pmNameCache.push(name);
+async function pmKnownNames() {
+    return (await pmKnownItems()).map((i) => i.name);
 }
 
-function pmNameCacheRemove(name) {
-    if (!_pmNameCache) return;
-    _pmNameCache = _pmNameCache.filter((n) => n !== name);
+async function pmKnownCategories() {
+    let server = [];
+    try {
+        const data = await apiGet("/prompt_manager/categories");
+        server = (data.categories || []).map((c) => c.name || c);
+    } catch (e) {
+    }
+    const set = new Set(server);
+    for (const i of _pmItemsCache || []) set.add(pmCategoryOf(i));
+    set.add(PM_DEFAULT_CATEGORY);
+    return Array.from(set).sort((a, b) => {
+        if (a === PM_DEFAULT_CATEGORY) return -1;
+        if (b === PM_DEFAULT_CATEGORY) return 1;
+        return a.localeCompare(b, "zh");
+    });
 }
 
-function pmNameCacheReset(names) {
-    _pmNameCache = Array.isArray(names) ? names : null;
+async function pmServerCategories() {
+    try {
+        const data = await apiGet("/prompt_manager/categories");
+        return (data.categories || []).map((c) => c.name || c);
+    } catch (e) {
+        return [];
+    }
+}
+
+function pmItemsCacheAdd(name, category) {
+    if (!_pmItemsCache) _pmItemsCache = [];
+    const cat = category || PM_DEFAULT_CATEGORY;
+    const hit = _pmItemsCache.find((i) => i.name === name);
+    if (hit) hit.category = cat;
+    else _pmItemsCache.push({ name, category: cat });
+}
+
+function pmItemsCacheRemove(name) {
+    if (!_pmItemsCache) return;
+    _pmItemsCache = _pmItemsCache.filter((i) => i.name !== name);
+}
+
+function pmItemsCacheReset(items) {
+    _pmItemsCache = (items || []).map((i) => ({
+        name: i.name,
+        category: pmCategoryOf(i),
+    }));
 }
 
 function confirmOverwrite(name) {
@@ -407,6 +690,94 @@ function confirmOverwrite(name) {
     });
 }
 
+function pmInputDialog(title, placeholder, initial) {
+    return new Promise((resolve) => {
+        ensureStyles();
+        const mask = document.createElement("div");
+        mask.className = "pm-mask";
+        mask.style.zIndex = "100002";
+        const dlg = document.createElement("div");
+        dlg.className = "pm-dialog pm-dialog-sm";
+
+        const head = document.createElement("div");
+        head.className = "pm-dialog-head";
+        const titleEl = document.createElement("div");
+        titleEl.className = "pm-dialog-title";
+        titleEl.textContent = title;
+        head.appendChild(titleEl);
+
+        const body = document.createElement("div");
+        body.className = "pm-dialog-body";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = placeholder;
+        input.value = initial || "";
+
+        const actions = document.createElement("div");
+        actions.className = "pm-dialog-actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "pm-btn";
+        cancel.textContent = "取消";
+        const ok = document.createElement("button");
+        ok.type = "button";
+        ok.className = "pm-btn pm-btn-primary";
+        ok.textContent = "确定";
+        actions.append(cancel, ok);
+        body.append(input, actions);
+        dlg.append(head, body);
+        mask.appendChild(dlg);
+        document.body.appendChild(mask);
+
+        let done = false;
+        const finish = (v) => {
+            if (done) return;
+            done = true;
+            document.removeEventListener("keydown", onKey, true);
+            try {
+                mask.remove();
+            } catch (e) {
+            }
+            resolve(v);
+        };
+        const confirm = () => {
+            const v = (input.value || "").trim();
+            if (!v) {
+                input.focus();
+                return;
+            }
+            finish(v);
+        };
+        const onKey = (e) => {
+            if (e.key === "Escape") {
+                e.stopPropagation();
+                finish(null);
+            } else if (e.key === "Enter" && document.activeElement === input) {
+                e.preventDefault();
+                e.stopPropagation();
+                confirm();
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        cancel.addEventListener("click", () => finish(null));
+        ok.addEventListener("click", confirm);
+        mask.addEventListener("mousedown", (e) => {
+            if (e.target === mask) finish(null);
+        });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                confirm();
+            }
+        });
+        setTimeout(() => {
+            input.focus();
+            input.select();
+        }, 30);
+    });
+}
+
 function closeSaveDialog() {
     if (!_pmSaveDialog) return;
     const d = _pmSaveDialog;
@@ -459,6 +830,72 @@ function saveWithDialog(target) {
     input.type = "text";
     input.placeholder = "输入保存名称...";
     input.value = _lastSaveName;
+
+    const catRow = document.createElement("div");
+    catRow.className = "pm-save-row";
+    const catLabel = document.createElement("span");
+    catLabel.className = "pm-save-label";
+    catLabel.textContent = "分类";
+    const catTabs = document.createElement("div");
+    catTabs.className = "pm-cat-bar pm-save-cats";
+    catRow.append(catLabel, catTabs);
+
+    let catDirty = !!_lastSaveCategory;
+    let catValue = _lastSaveCategory || PM_DEFAULT_CATEGORY;
+    let catList = [];
+
+    const renderCatTabs = () => {
+        catTabs.innerHTML = "";
+        if (catValue && !catList.includes(catValue)) catList.push(catValue);
+        const makeTab = (label) => {
+            const t = document.createElement("button");
+            t.type = "button";
+            t.className = "pm-tab" + (catValue === label ? " pm-tab-on" : "");
+            t.textContent = label;
+            t.addEventListener("click", () => {
+                catValue = label;
+                catDirty = true;
+                renderCatTabs();
+            });
+            return t;
+        };
+        for (const c of catList) catTabs.appendChild(makeTab(c));
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "pm-tab pm-tab-add";
+        add.title = "新建分类";
+        add.textContent = "+";
+        add.addEventListener("click", async () => {
+            const name = (await pmInputDialog("新建分类", "输入分类名称...", "") || "").trim();
+            if (!name) return;
+            if (!catList.includes(name)) catList.push(name);
+            catValue = name;
+            catDirty = true;
+            renderCatTabs();
+            toast(`分类已选择: ${name}`);
+        });
+        catTabs.appendChild(add);
+    };
+
+    pmKnownCategories().then((cats) => {
+        catList = cats.slice();
+        renderCatTabs();
+    });
+    renderCatTabs();
+
+    const syncCategoryFromName = async () => {
+        const name = (input.value || "").trim();
+        if (!name || catDirty) return;
+        const items = await pmKnownItems();
+        const hit = items.find((i) => i.name === name);
+        if (hit) {
+            catValue = hit.category || PM_DEFAULT_CATEGORY;
+            renderCatTabs();
+        }
+    };
+    input.addEventListener("input", () => syncCategoryFromName());
+    syncCategoryFromName();
+
     const info = document.createElement("div");
     info.className = "pm-dialog-hint";
     info.textContent = `将保存当前文本 (共 ${text.length} 个字符), 同名保存会先询问是否覆盖`;
@@ -476,7 +913,7 @@ function saveWithDialog(target) {
     ok.textContent = "保存";
     actions.append(cancel, ok);
 
-    body.append(input, info, actions);
+    body.append(input, catRow, info, actions);
     dlg.append(head, body);
     mask.appendChild(dlg);
     document.body.appendChild(mask);
@@ -511,11 +948,17 @@ function saveWithDialog(target) {
                 return;
             }
         }
+        const category = catValue || PM_DEFAULT_CATEGORY;
         try {
-            await apiPost("/prompt_manager/save", { name, text });
+            await apiPost("/prompt_manager/save", { name, text, category });
             _lastSaveName = name;
-            pmNameCacheAdd(name);
-            toast(`已保存: ${name}`);
+            _lastSaveCategory = category;
+            pmItemsCacheAdd(name, category);
+            toast(
+                category === PM_DEFAULT_CATEGORY
+                    ? `已保存: ${name}`
+                    : `已保存到「${category}」: ${name}`
+            );
             closeSaveDialog();
         } catch (e) {
             toast(e.message, false);
@@ -524,13 +967,14 @@ function saveWithDialog(target) {
 
     ok.addEventListener("click", doSave);
     cancel.addEventListener("click", () => closeSaveDialog());
-    input.addEventListener("keydown", (e) => {
+    const enterSave = (e) => {
         if (e.key === "Enter") {
             e.preventDefault();
             e.stopPropagation();
             doSave();
         }
-    });
+    };
+    input.addEventListener("keydown", enterSave);
 
     setTimeout(() => {
         input.focus();
@@ -708,17 +1152,14 @@ function makeToolbarButtons(target) {
             "提示词列表 (点击名称即加载)",
             () => openPromptDialog(target, "load"),
         ],
+    ];
+}
 
-        [
-            PM_ICONS.save,
-            "保存当前文本到提示词库",
-            () => saveWithDialog(target),
-        ],
-        [
-            PM_ICONS.del,
-            "删除提示词 (在列表中选择)",
-            () => openPromptDialog(target, "delete"),
-        ],
+function makeSaveAction(target) {
+    return [
+        PM_ICONS.save,
+        "保存当前文本到提示词库",
+        () => saveWithDialog(target),
     ];
 }
 
@@ -730,7 +1171,7 @@ function addToolbar(node, widget) {
     node._pmToolbars[key] = true;
 
     const target = { node, widget, widgetName: widget.name };
-    const toolbar = createToolbarElement(makeToolbarButtons(target));
+    const toolbar = createToolbarElement(makeToolbarButtons(target), makeSaveAction(target));
     mountToolbar(node, widget, toolbar.el).then((ok) => {
         if (ok) {
             keepToolbarMounted(node, widget, toolbar.el);
@@ -751,9 +1192,6 @@ function svgIcon(paths, filled = false) {
 }
 
 const PM_ICONS = {
-
-    trigger: svgIcon(`<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>`),
-
     list: svgIcon(
         `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/>` +
             `<path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`
@@ -769,6 +1207,10 @@ const PM_ICONS = {
         `<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>` +
             `<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>` +
             `<path d="M10 11v6"/><path d="M14 11v6"/>`
+    ),
+    move: svgIcon(
+        `<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>` +
+            `<path d="m12 10v6"/><path d="m9 13 3-3 3 3"/>`
     ),
 
     close: svgIcon(`<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`),
@@ -1038,7 +1480,31 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
     opacity:0;transition:opacity .15s ease,background .15s ease,color .15s ease;}
 .pm-item:hover .pm-item-del{opacity:1;}
 .pm-item-del:hover{background:rgba(220,80,80,.22);color:#ff8a8a;}
+.pm-item-move:hover{background:rgba(47,111,221,.22);color:#9fd0ff;}
+.pm-move-cats{max-height:200px;overflow-y:auto;padding:2px;}
+.pm-move-cats::-webkit-scrollbar{width:8px;}
+.pm-move-cats::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:4px;}
+.pm-move-cats .pm-tab{display:inline-block;margin:2px;}
+.pm-item-cat{display:inline-block;align-self:flex-start;margin-top:3px;padding:1px 7px;
+    font-size:11px;color:#9a9a9a;background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.08);border-radius:5px;}
 .pm-empty{padding:30px 12px;text-align:center;font-size:12.5px;color:#7d7d7d;line-height:1.7;}
+.pm-cat-bar{display:flex;align-items:center;gap:2px;padding:0 14px 6px;overflow-x:auto;}
+.pm-cat-bar::-webkit-scrollbar{height:0;}
+.pm-tab{all:unset;box-sizing:border-box;position:relative;padding:6px 11px;font-size:12.5px;
+    color:#9a9a9a;cursor:pointer;white-space:nowrap;border-radius:6px;
+    transition:color .15s ease,background .15s ease;}
+.pm-tab:hover{color:#e8e8e8;background:rgba(255,255,255,.06);}
+.pm-tab-on{color:#fff;}
+.pm-tab-on::after{content:"";position:absolute;left:9px;right:9px;bottom:-2px;height:2px;
+    border-radius:2px;background:#2f6fdd;}
+.pm-tab-add{color:#8a8a8a;font-size:14px;padding:6px 9px;}
+.pm-tab-add:hover{color:#9fd0ff;}
+.pm-save-cats{padding:0;flex:1;min-width:0;margin-left:-8px;}
+.pm-cat-group{padding:8px 10px 4px;font-size:11.5px;color:#9fd0ff;letter-spacing:.3px;}
+.pm-save-row{display:flex;align-items:center;gap:8px;}
+.pm-save-label{flex:0 0 36px;font-size:12.5px;color:#bbb;}
+.pm-save-row input{flex:1;min-width:0;}
 /* ===== 工具条设置面板 ===== */
 .pm-set-row{display:flex;align-items:center;gap:10px;font-size:13px;color:#ddd;}
 .pm-set-label{flex:0 0 auto;width:56px;color:#bbb;white-space:nowrap;}
@@ -1057,7 +1523,7 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
     document.head.appendChild(style);
 }
 
-function createToolbarElement(actions) {
+function createToolbarElement(actions, saveAction) {
     ensureStyles();
 
     const wrap = document.createElement("div");
@@ -1069,18 +1535,17 @@ function createToolbarElement(actions) {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "pm-trigger";
-    trigger.title = "提示词工具";
-    trigger.innerHTML = PM_ICONS.trigger;
-    trigger.addEventListener("click", (e) => e.stopPropagation());
+    trigger.title = saveAction[1];
+    trigger.innerHTML = saveAction[0];
+    trigger.addEventListener("mousedown", (e) => e.preventDefault());
+    trigger.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        saveAction[2]();
+    });
     pill.appendChild(trigger);
 
-    actions.forEach(([icon, tip, cb], i) => {
-
-        if (i === 1) {
-            const divider = document.createElement("span");
-            divider.className = "pm-actions-divider";
-            pill.appendChild(divider);
-        }
+    actions.forEach(([icon, tip, cb]) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.title = tip;
@@ -1216,7 +1681,10 @@ function addToolbarToTextarea(node, ta) {
     const host = ta.closest(".p-floatlabel, [class*='floatlabel']") || ta.parentElement;
     if (!host) return;
     if (host.querySelector(".pm-toolbar")) return;
-    const toolbar = createToolbarElement(makeToolbarButtons({ node, textarea: ta }));
+    const toolbar = createToolbarElement(
+        makeToolbarButtons({ node, textarea: ta }),
+        makeSaveAction({ node, textarea: ta })
+    );
     if (getComputedStyle(host).position === "static") host.style.position = "relative";
     host.appendChild(toolbar.el);
     ta._pmToolbarMounted = true;

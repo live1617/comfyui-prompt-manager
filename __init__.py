@@ -8,7 +8,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.1.2"
+__version__ = "1.2.5"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:
@@ -54,12 +54,21 @@ try:
             return web.json_response({"error": "请求体必须是 JSON"}, status=400)
         name = (data.get("name") or "").strip()
         text = data.get("text") or ""
+        category = (data.get("category") or "").strip() or db.DEFAULT_CATEGORY
         if not name:
             return web.json_response(
                 {"error": "保存名称不能为空, 请先填写 save_name_input"}, status=400
             )
-        db.save_prompt(name, text)
-        return web.json_response({"ok": True, "name": name, "names": db.list_names()})
+        db.save_prompt(name, text, category)
+        return web.json_response(
+            {
+                "ok": True,
+                "name": name,
+                "category": category,
+                "names": db.list_names(),
+                "categories": db.list_categories(),
+            }
+        )
 
     @routes.post("/prompt_manager/load")
     async def load_handler(request):
@@ -90,11 +99,55 @@ try:
             )
         if not db.delete_prompt(name):
             return web.json_response({"error": f"提示词 '{name}' 不存在"}, status=404)
-        return web.json_response({"ok": True, "name": name, "names": db.list_names()})
+        return web.json_response(
+            {
+                "ok": True,
+                "name": name,
+                "names": db.list_names(),
+                "categories": db.list_categories(),
+            }
+        )
+
+    @routes.post("/prompt_manager/move")
+    async def move_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        name = (data.get("name") or "").strip()
+        category = (data.get("category") or "").strip() or db.DEFAULT_CATEGORY
+        if not name:
+            return web.json_response({"error": "缺少提示词名称"}, status=400)
+        if not db.move_prompt(name, category):
+            return web.json_response({"error": f"提示词 '{name}' 不存在"}, status=404)
+        return web.json_response(
+            {
+                "ok": True,
+                "name": name,
+                "category": category,
+                "categories": db.list_categories(),
+            }
+        )
 
     @routes.get("/prompt_manager/list")
     async def list_handler(request):
         return web.json_response({"ok": True, "names": db.list_names()})
+
+    @routes.get("/prompt_manager/categories")
+    async def categories_handler(request):
+        return web.json_response({"ok": True, "categories": db.list_categories()})
+
+    @routes.post("/prompt_manager/categories")
+    async def add_category_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        name = (data.get("name") or "").strip()
+        if not name:
+            return web.json_response({"error": "分类名称不能为空"}, status=400)
+        db.add_category(name)
+        return web.json_response({"ok": True, "categories": db.list_categories()})
 
     @routes.get("/prompt_manager/all")
     async def all_handler(request):
