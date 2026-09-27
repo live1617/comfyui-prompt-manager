@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.2.5";
+const PM_VERSION = "1.2.6";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -1148,18 +1148,15 @@ function injectToolbars(node, attempt = 0) {
 function makeToolbarButtons(target) {
     return [
         [
+            PM_ICONS.save,
+            "保存当前文本到提示词库",
+            () => saveWithDialog(target),
+        ],
+        [
             PM_ICONS.list,
             "提示词列表 (点击名称即加载)",
             () => openPromptDialog(target, "load"),
         ],
-    ];
-}
-
-function makeSaveAction(target) {
-    return [
-        PM_ICONS.save,
-        "保存当前文本到提示词库",
-        () => saveWithDialog(target),
     ];
 }
 
@@ -1171,7 +1168,7 @@ function addToolbar(node, widget) {
     node._pmToolbars[key] = true;
 
     const target = { node, widget, widgetName: widget.name };
-    const toolbar = createToolbarElement(makeToolbarButtons(target), makeSaveAction(target));
+    const toolbar = createToolbarElement(makeToolbarButtons(target));
     mountToolbar(node, widget, toolbar.el).then((ok) => {
         if (ok) {
             keepToolbarMounted(node, widget, toolbar.el);
@@ -1192,6 +1189,10 @@ function svgIcon(paths, filled = false) {
 }
 
 const PM_ICONS = {
+    trigger: svgIcon(
+        `<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>`
+    ),
+
     list: svgIcon(
         `<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/>` +
             `<path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>`
@@ -1523,7 +1524,7 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
     document.head.appendChild(style);
 }
 
-function createToolbarElement(actions, saveAction) {
+function createToolbarElement(actions) {
     ensureStyles();
 
     const wrap = document.createElement("div");
@@ -1535,14 +1536,10 @@ function createToolbarElement(actions, saveAction) {
     const trigger = document.createElement("button");
     trigger.type = "button";
     trigger.className = "pm-trigger";
-    trigger.title = saveAction[1];
-    trigger.innerHTML = saveAction[0];
+    trigger.title = "提示词工具";
+    trigger.innerHTML = PM_ICONS.trigger;
     trigger.addEventListener("mousedown", (e) => e.preventDefault());
-    trigger.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        saveAction[2]();
-    });
+    trigger.addEventListener("click", (e) => e.stopPropagation());
     pill.appendChild(trigger);
 
     actions.forEach(([icon, tip, cb]) => {
@@ -1681,10 +1678,7 @@ function addToolbarToTextarea(node, ta) {
     const host = ta.closest(".p-floatlabel, [class*='floatlabel']") || ta.parentElement;
     if (!host) return;
     if (host.querySelector(".pm-toolbar")) return;
-    const toolbar = createToolbarElement(
-        makeToolbarButtons({ node, textarea: ta }),
-        makeSaveAction({ node, textarea: ta })
-    );
+    const toolbar = createToolbarElement(makeToolbarButtons({ node, textarea: ta }));
     if (getComputedStyle(host).position === "static") host.style.position = "relative";
     host.appendChild(toolbar.el);
     ta._pmToolbarMounted = true;
