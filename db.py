@@ -28,10 +28,15 @@ def get_conn() -> sqlite3.Connection:
         """
         CREATE TABLE IF NOT EXISTS pm_categories (
             name       TEXT UNIQUE NOT NULL,
+            sort_order INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+    cat_cols = [r["name"] for r in conn.execute("PRAGMA table_info(pm_categories)").fetchall()]
+    if "sort_order" not in cat_cols:
+        conn.execute("ALTER TABLE pm_categories ADD COLUMN sort_order INTEGER DEFAULT 0")
+        conn.commit()
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(prompts)").fetchall()]
     if "category" not in cols:
         conn.execute(
@@ -125,11 +130,74 @@ def add_category(name: str) -> bool:
     with _lock:
         conn = get_conn()
         try:
+            _ensure_category_rows(conn)
             cur = conn.execute(
-                "INSERT OR IGNORE INTO pm_categories(name) VALUES(?)", (cat,)
+                "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
+                (cat, _next_order(conn)),
             )
             conn.commit()
             return cur.rowcount > 0
+        finally:
+            conn.close()
+
+def _next_order(conn) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(sort_order), 0) AS m FROM pm_categories"
+    ).fetchone()
+    return (row["m"] if row else 0) + 1
+
+def _ensure_category_rows(conn) -> None:
+    nxt = _next_order(conn)
+    rows = conn.execute("SELECT DISTINCT category FROM prompts").fetchall()
+    for r in rows:
+        cat = normalize_category(r["category"])
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
+            (cat, nxt),
+        )
+        if cur.rowcount:
+            nxt += 1
+
+def rename_category(old: str, new: str) -> bool:
+    o = normalize_category(old)
+    n = normalize_category(new)
+    if o == n:
+        return False
+    with _lock:
+        conn = get_conn()
+        try:
+            _ensure_category_rows(conn)
+            conflict = conn.execute(
+                "SELECT 1 FROM pm_categories WHERE name = ?", (n,)
+            ).fetchone()
+            conn.execute("UPDATE prompts SET category = ? WHERE category = ?", (n, o))
+            if conflict:
+                conn.execute("DELETE FROM pm_categories WHERE name = ?", (o,))
+            else:
+                conn.execute(
+                    "UPDATE pm_categories SET name = ? WHERE name = ?", (n, o)
+                )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+
+def set_category_order(names: list) -> None:
+    with _lock:
+        conn = get_conn()
+        try:
+            _ensure_category_rows(conn)
+            for i, n in enumerate(names or []):
+                cat = normalize_category(n)
+                cur = conn.execute(
+                    "UPDATE pm_categories SET sort_order = ? WHERE name = ?", (i, cat)
+                )
+                if not cur.rowcount:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
+                        (cat, i),
+                    )
+            conn.commit()
         finally:
             conn.close()
 
@@ -137,21 +205,17 @@ def list_categories() -> list:
     with _lock:
         conn = get_conn()
         try:
-            counts = {
-                r["category"]: r["count"]
-                for r in conn.execute(
-                    "SELECT category, COUNT(*) AS count FROM prompts GROUP BY category"
-                ).fetchall()
-            }
-            names = set(counts) | {
-                r["name"] for r in conn.execute("SELECT name FROM pm_categories").fetchall()
-            }
-            names.discard("")
-            ordered = sorted(
-                names,
-                key=lambda n: (0 if n == DEFAULT_CATEGORY else 1, n),
-            )
-            return [{"name": n, "count": counts.get(n, 0)} for n in ordered]
+            _ensure_category_rows(conn)
+            rows = conn.execute(
+                """
+                SELECT c.name AS name,
+                       (SELECT COUNT(*) FROM prompts p WHERE p.category = c.name) AS count,
+                       c.sort_order AS sort_order
+                FROM pm_categories c
+                ORDER BY c.sort_order, c.name
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 
@@ -159,6 +223,7 @@ def list_items(preview_len: int = 160) -> list:
     with _lock:
         conn = get_conn()
         try:
+            _ensure_category_rows(conn)
             rows = conn.execute(
                 """
                 SELECT name,
@@ -167,7 +232,13 @@ def list_items(preview_len: int = 160) -> list:
                        length(text)       AS text_len,
                        updated_at
                 FROM prompts
-                ORDER BY category, name
+                ORDER BY (
+                           SELECT COALESCE(c.sort_order, 999999)
+                           FROM pm_categories c
+                           WHERE c.name = prompts.category
+                       ),
+                       category,
+                       name
                 """,
                 (preview_len,),
             ).fetchall()

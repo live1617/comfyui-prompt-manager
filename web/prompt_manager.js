@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.2.6";
+const PM_VERSION = "1.3.0";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -282,6 +282,16 @@ function renderCategoryBar(d) {
         }
     });
     bar.appendChild(add);
+
+    const manage = document.createElement("button");
+    manage.type = "button";
+    manage.className = "pm-tab pm-tab-manage";
+    manage.title = "分类管理 (改名 / 排序)";
+    manage.innerHTML = PM_ICONS.gear;
+    manage.addEventListener("click", async () => {
+        await openCategoryManageDialog(d);
+    });
+    bar.appendChild(manage);
 }
 
 function renderDialogList(d) {
@@ -402,6 +412,173 @@ function makeDialogRow(d, item) {
         closePromptDialog();
     });
     return row;
+}
+
+async function openCategoryManageDialog(d) {
+    ensureStyles();
+    let cats = [];
+    try {
+        const data = await apiGet("/prompt_manager/categories");
+        cats = (data.categories || []).map((c) => c.name || c);
+    } catch (e) {
+        toast(`读取分类失败: ${e.message}`, false);
+        return;
+    }
+
+    const mask = document.createElement("div");
+    mask.className = "pm-mask";
+    mask.style.zIndex = "100002";
+    const dlg = document.createElement("div");
+    dlg.className = "pm-dialog pm-dialog-sm";
+
+    const head = document.createElement("div");
+    head.className = "pm-dialog-head";
+    const title = document.createElement("div");
+    title.className = "pm-dialog-title";
+    title.textContent = "分类管理 (改名 / 排序)";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "pm-dialog-close";
+    closeBtn.title = "关闭 (Esc)";
+    closeBtn.innerHTML = PM_ICONS.close;
+    closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        finish();
+    });
+    head.append(title, closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "pm-dialog-body";
+    const hint = document.createElement("div");
+    hint.className = "pm-dialog-hint";
+    hint.style.padding = "0";
+    hint.textContent = "✎ 改名，↑↓ 调整显示顺序";
+    const listEl = document.createElement("div");
+    listEl.className = "pm-cat-manage-list";
+    const actions = document.createElement("div");
+    actions.className = "pm-dialog-actions";
+    const done = document.createElement("button");
+    done.type = "button";
+    done.className = "pm-btn pm-btn-primary";
+    done.textContent = "完成";
+    done.addEventListener("click", () => finish());
+    actions.append(done);
+
+    body.append(hint, listEl, actions);
+    dlg.append(head, body);
+    mask.appendChild(dlg);
+    document.body.appendChild(mask);
+
+    _pmConfirmOpen = true;
+    let closed = false;
+    const finish = () => {
+        if (closed) return;
+        closed = true;
+        document.removeEventListener("keydown", onKey, true);
+        _pmConfirmOpen = false;
+        try {
+            mask.remove();
+        } catch (e) {
+        }
+        if (d && ensureDialogAlive(d)) reloadDialogItems(d);
+    };
+    const onKey = (e) => {
+        if (e.key === "Escape") {
+            e.stopPropagation();
+            finish();
+        }
+    };
+    document.addEventListener("keydown", onKey, true);
+    mask.addEventListener("mousedown", (e) => {
+        if (e.target === mask) finish();
+    });
+    dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+
+    const saveOrder = async () => {
+        try {
+            await apiPost("/prompt_manager/categories/order", { names: cats });
+        } catch (e) {
+            toast(e.message, false);
+        }
+    };
+
+    const render = () => {
+        listEl.innerHTML = "";
+        if (!cats.length) {
+            const empty = document.createElement("div");
+            empty.className = "pm-empty";
+            empty.textContent = "还没有分类";
+            listEl.appendChild(empty);
+            return;
+        }
+        cats.forEach((name, i) => {
+            const row = document.createElement("div");
+            row.className = "pm-cat-man-row";
+            const label = document.createElement("span");
+            label.className = "pm-cat-man-name";
+            label.textContent = name;
+
+            const mkBtn = (icon, tip, fn, disabled) => {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.className = "pm-cat-man-btn";
+                b.title = tip;
+                b.innerHTML = icon;
+                if (disabled) b.classList.add("pm-cat-man-btn-off");
+                b.addEventListener("mousedown", (e) => e.preventDefault());
+                b.addEventListener("click", fn);
+                return b;
+            };
+
+            const renameBtn = mkBtn(PM_ICONS.edit, "改名", async () => {
+                const nn = (await pmInputDialog("重命名分类", "输入新的分类名称...", name) || "").trim();
+                if (!nn || nn === name) return;
+                try {
+                    await apiPost("/prompt_manager/categories/rename", {
+                        old_name: name,
+                        new_name: nn,
+                    });
+                    cats[i] = nn;
+                    toast(`已改名: ${name} → ${nn}`);
+                    render();
+                } catch (e) {
+                    toast(e.message, false);
+                }
+            });
+
+            const upBtn = mkBtn(
+                PM_ICONS.up,
+                "上移",
+                async () => {
+                    if (i === 0) return;
+                    const t = cats[i - 1];
+                    cats[i - 1] = cats[i];
+                    cats[i] = t;
+                    render();
+                    await saveOrder();
+                },
+                i === 0
+            );
+            const downBtn = mkBtn(
+                PM_ICONS.down,
+                "下移",
+                async () => {
+                    if (i === cats.length - 1) return;
+                    const t = cats[i + 1];
+                    cats[i + 1] = cats[i];
+                    cats[i] = t;
+                    render();
+                    await saveOrder();
+                },
+                i === cats.length - 1
+            );
+
+            row.append(label, renameBtn, upBtn, downBtn);
+            listEl.appendChild(row);
+        });
+    };
+    render();
+    setTimeout(() => done.focus(), 30);
 }
 
 async function openMoveDialog(d, name) {
@@ -1213,6 +1390,11 @@ const PM_ICONS = {
         `<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>` +
             `<path d="m12 10v6"/><path d="m9 13 3-3 3 3"/>`
     ),
+    edit: svgIcon(
+        `<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>`
+    ),
+    up: svgIcon(`<path d="m6 15 6-6 6 6"/>`),
+    down: svgIcon(`<path d="m6 9 6 6 6-6"/>`),
 
     close: svgIcon(`<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`),
 
@@ -1501,6 +1683,25 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
     border-radius:2px;background:#2f6fdd;}
 .pm-tab-add{color:#8a8a8a;font-size:14px;padding:6px 9px;}
 .pm-tab-add:hover{color:#9fd0ff;}
+.pm-tab-manage{display:flex;align-items:center;padding:6px 8px;color:#8a8a8a;}
+.pm-tab-manage:hover{color:#fff;}
+.pm-tab-manage svg{width:13px;height:13px;}
+.pm-cat-manage-list{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;
+    padding:2px;}
+.pm-cat-manage-list::-webkit-scrollbar{width:8px;}
+.pm-cat-manage-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:4px;}
+.pm-cat-man-row{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:7px;
+    background:#2a2a2a;border:1px solid #3d3d3d;}
+.pm-cat-man-row:hover{border-color:#5a5a5a;}
+.pm-cat-man-name{flex:1;min-width:0;font-size:12.5px;color:#e8e8e8;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pm-cat-man-btn{all:unset;box-sizing:border-box;flex:0 0 auto;width:26px;height:26px;display:flex;
+    align-items:center;justify-content:center;border-radius:6px;cursor:pointer;color:#b6b6b6;
+    transition:background .15s ease,color .15s ease;}
+.pm-cat-man-btn:hover{background:rgba(255,255,255,.12);color:#fff;}
+.pm-cat-man-btn svg{width:14px;height:14px;}
+.pm-cat-man-btn-off{opacity:.3;cursor:default;}
+.pm-cat-man-btn-off:hover{background:transparent;color:#b6b6b6;}
 .pm-save-cats{padding:0;flex:1;min-width:0;margin-left:-8px;}
 .pm-cat-group{padding:8px 10px 4px;font-size:11.5px;color:#9fd0ff;letter-spacing:.3px;}
 .pm-save-row{display:flex;align-items:center;gap:8px;}

@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.2.6-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -61,7 +61,9 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 ## 分类
 
 - 保存时选分类（默认 = 「默认」分类），列表按分类管理提示词
-- 列表弹窗顶部有分类筛选条（全部 + 各分类，带数量），列表按分类分组显示，条目上会显示所属分类标签
+- 列表弹窗顶部有分类标签条（全部 + 各分类）：点标签只显示该分类内容，列表按分类分组、条目显示所属分类标签
+- 标签条右侧 **⚙ 分类管理**：每个分类可 **✎ 改名**（该分类下所有提示词自动跟随）、
+  **↑ ↓ 调整显示顺序**（顺序持久化到数据库，列表分组也按此顺序），改到已存在的名字会合并进那个分类
 - 分类存在数据库里，导出/导入的 JSON 会带上 `category` 字段
 - 旧版本升级：插件启动时自动给数据表加 `category` 列，已有提示词归到「默认」分类，数据不丢
 
@@ -84,7 +86,10 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 | POST | `/prompt_manager/load` | `{name}` 读取内容 |
 | POST | `/prompt_manager/delete` | `{name}` 删除 |
 | GET  | `/prompt_manager/list` | 全部名称 |
-| GET  | `/prompt_manager/categories` | 分类列表（含数量） |
+| GET  | `/prompt_manager/categories` | 分类列表（含数量，按排序返回） |
+| POST | `/prompt_manager/categories` | `{name}` 新建分类 |
+| POST | `/prompt_manager/categories/rename` | `{old_name, new_name}` 分类改名（提示词自动跟随） |
+| POST | `/prompt_manager/categories/order` | `{names: [...]}` 保存分类排序 |
 | GET  | `/prompt_manager/all` | 列表弹窗用：名称 + 分类 + 内容预览 + 长度 + 更新时间 |
 | POST | `/prompt_manager/move` | `{name, category}` 修改提示词所属分类 |
 | GET  | `/prompt_manager/export` | 导出 JSON（附件下载） |
@@ -115,6 +120,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.3.0 | 2026-09-28 | 分类可改名、可排序：分类标签条新增 ⚙ 分类管理弹窗（✎ 改名 + ↑↓ 调整顺序）；后端 pm_categories 增加 sort_order 列并新增 rename / order 接口，列表分组顺序跟随自定义排序 |
 | 1.2.6 | 2026-09-27 | 还原笔形触发图标（收起态只显示它），保存按钮排在展开后的第一位、列表第二位 |
 | 1.2.5 | 2026-09-26 | 工具条精简：保存（软盘）成为收起态主图标、点击即保存并排在展开后第一位，移除删除按钮和原有的笔形触发图标（删除统一在列表弹窗里做） |
 | 1.2.4 | 2026-09-26 | 列表条目新增「移动」按钮（删除按钮左侧）：弹出分类标签选择器（可新建分类），一键把提示词移到目标分类；后端新增 POST /prompt_manager/move 接口 |

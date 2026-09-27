@@ -8,7 +8,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.2.6"
+__version__ = "1.3.0"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:
@@ -147,6 +147,31 @@ try:
         if not name:
             return web.json_response({"error": "分类名称不能为空"}, status=400)
         db.add_category(name)
+        return web.json_response({"ok": True, "categories": db.list_categories()})
+
+    @routes.post("/prompt_manager/categories/rename")
+    async def rename_category_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        old = (data.get("old_name") or data.get("old") or "").strip()
+        new = (data.get("new_name") or data.get("new") or "").strip()
+        if not old or not new:
+            return web.json_response({"error": "分类名称不能为空"}, status=400)
+        db.rename_category(old, new)
+        return web.json_response({"ok": True, "categories": db.list_categories()})
+
+    @routes.post("/prompt_manager/categories/order")
+    async def order_categories_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        names = data.get("names") or []
+        if not isinstance(names, list):
+            return web.json_response({"error": "names 必须是数组"}, status=400)
+        db.set_category_order(names)
         return web.json_response({"ok": True, "categories": db.list_categories()})
 
     @routes.get("/prompt_manager/all")
