@@ -8,7 +8,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.3.0"
+__version__ = "1.3.2"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:
@@ -85,6 +85,24 @@ try:
         if text is None:
             return web.json_response({"error": f"提示词 '{name}' 不存在"}, status=404)
         return web.json_response({"ok": True, "name": name, "text": text})
+
+    @routes.post("/prompt_manager/rename")
+    async def rename_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        name = (data.get("name") or data.get("old_name") or "").strip()
+        new_name = (data.get("new_name") or "").strip()
+        if not name:
+            return web.json_response({"error": "缺少提示词名称"}, status=400)
+        if not new_name:
+            return web.json_response({"error": "新名称不能为空"}, status=400)
+        if not db.rename_prompt(name, new_name):
+            return web.json_response(
+                {"error": f"改名失败: '{new_name}' 已存在或 '{name}' 不存在"}, status=400
+            )
+        return web.json_response({"ok": True, "name": new_name, "names": db.list_names()})
 
     @routes.post("/prompt_manager/delete")
     async def delete_handler(request):

@@ -82,6 +82,27 @@ def load_prompt(name: str):
         finally:
             conn.close()
 
+def rename_prompt(name: str, new_name: str) -> bool:
+    new = (new_name or "").strip()
+    if not new:
+        return False
+    with _lock:
+        conn = get_conn()
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM prompts WHERE name = ?", (new,)
+            ).fetchone()
+            if exists:
+                return False
+            cur = conn.execute(
+                "UPDATE prompts SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                (new, name),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
 def delete_prompt(name: str) -> bool:
     with _lock:
         conn = get_conn()

@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.3.0-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.3.2-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -8,13 +8,16 @@
 
 平时文本框角落只有一个 ✏️ 笔形小图标，鼠标移上去工具条会展开：
 
-- **🔖 保存**（展开后第一位）—— 弹出「名称 + 分类」输入（记住上次用的），把当前文本框内容存入数据库，同名覆盖
+- **🔖 保存**（展开后第一位）—— 弹出「名称 + 分类」输入，把当前文本框内容存入数据库，同名覆盖
+  - **名称自动按分类编号**：默认填好 `分类名_0001`、`分类名_0002`…… 「默认」分类用 `prompt_` 开头
+    （`prompt_0001`、`prompt_0002`……）；切换分类时自动重算，手输过名称就不再覆盖你的输入
   - 分类是和列表弹窗同一套横向标签页：直接点选已有分类，点「+」可新建
   - 输入已存在的名称时会自动带出它原来的分类；保存时若同名已存在会先弹确认框
 - **☰ 列表**（第二位） —— 打开提示词库对话框：搜索 + 分类标签页 + 名称/内容预览，**点击名称即加载到当前文本框**
-- **📤 移动** —— 列表弹窗里每条提示词悬停时会出现移动按钮（删除按钮左边），
+- **✎ 改名** —— 悬停条目出现（改名绿色），弹出输入框改这条提示词的名字；改成已存在的名字会被拒绝
+- **📤 移动** —— 悬停条目出现（移动蓝色，在删除按钮左边），
   点开分类标签选择器（也能「+」新建），点击目标分类即把该条提示词移过去
-- **🗑️ 删除** —— 在列表弹窗里操作：悬停条目显示删除小图标，或打开对话框的删除模式（有确认）
+- **🗑️ 删除** —— 在列表弹窗里操作：悬停条目显示红色删除小图标，或打开对话框的删除模式（有确认）
 - ｜
 - **⚙ 设置** —— 打开工具条设置面板：
   - **透明度**：滑块调节图标平时的不透明度，拖动即时生效
@@ -91,6 +94,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 | POST | `/prompt_manager/categories/rename` | `{old_name, new_name}` 分类改名（提示词自动跟随） |
 | POST | `/prompt_manager/categories/order` | `{names: [...]}` 保存分类排序 |
 | GET  | `/prompt_manager/all` | 列表弹窗用：名称 + 分类 + 内容预览 + 长度 + 更新时间 |
+| POST | `/prompt_manager/rename` | `{name, new_name}` 提示词改名（重名会被拒绝） |
 | POST | `/prompt_manager/move` | `{name, category}` 修改提示词所属分类 |
 | GET  | `/prompt_manager/export` | 导出 JSON（附件下载） |
 | POST | `/prompt_manager/import` | multipart 上传 JSON 导入 |
@@ -120,6 +124,8 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.3.2 | 2026-09-29 | 提示词可改名：列表条目悬停出现 ✎ 改名按钮（绿色），改到已存在的名字会被拒绝；后端新增 POST /prompt_manager/rename |
+| 1.3.1 | 2026-09-29 | 保存名称改为按分类自动编号：`分类名_0001`、「默认」分类用 `prompt_0001`，切换分类自动重算（手动改过名称则不覆盖），重名会自动跳号 |
 | 1.3.0 | 2026-09-28 | 分类可改名、可排序：分类标签条新增 ⚙ 分类管理弹窗（✎ 改名 + ↑↓ 调整顺序）；后端 pm_categories 增加 sort_order 列并新增 rename / order 接口，列表分组顺序跟随自定义排序 |
 | 1.2.6 | 2026-09-27 | 还原笔形触发图标（收起态只显示它），保存按钮排在展开后的第一位、列表第二位 |
 | 1.2.5 | 2026-09-26 | 工具条精简：保存（软盘）成为收起态主图标、点击即保存并排在展开后第一位，移除删除按钮和原有的笔形触发图标（删除统一在列表弹窗里做） |
