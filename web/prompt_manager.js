@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.3.2";
+const PM_VERSION = "1.3.8";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -121,7 +121,7 @@ async function openPromptDialog(target, mode = "load") {
     mask.className = "pm-mask";
 
     const dlg = document.createElement("div");
-    dlg.className = "pm-dialog";
+    dlg.className = "pm-dialog pm-dialog-wide";
 
     const head = document.createElement("div");
     head.className = "pm-dialog-head";
@@ -153,13 +153,29 @@ async function openPromptDialog(target, mode = "load") {
             ? "点击名称或右侧图标删除该提示词"
             : "点击名称即可加载到当前文本框";
 
-    const catBar = document.createElement("div");
-    catBar.className = "pm-cat-bar";
+    const bodyRow = document.createElement("div");
+    bodyRow.className = "pm-dialog-body-row";
+
+    const catSide = document.createElement("div");
+    catSide.className = "pm-cat-side";
+
+    const catListWrap = document.createElement("div");
+    catListWrap.className = "pm-cat-side-list";
+
+    const catFoot = document.createElement("div");
+    catFoot.className = "pm-cat-side-foot";
+
+    catSide.append(catListWrap, catFoot);
+
+    const listCol = document.createElement("div");
+    listCol.className = "pm-list-col";
 
     const list = document.createElement("div");
     list.className = "pm-dialog-list";
 
-    dlg.append(head, searchWrap, catBar, hint, list);
+    listCol.append(hint, list);
+    bodyRow.append(catSide, listCol);
+    dlg.append(head, searchWrap, bodyRow);
     mask.appendChild(dlg);
     document.body.appendChild(mask);
 
@@ -176,7 +192,7 @@ async function openPromptDialog(target, mode = "load") {
 
     dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
 
-    const d = { mask, dlg, list, catBar, search, mode, target, items: null, onKey, category: "", extraCats: [] };
+    const d = { mask, dlg, list, catBar: catListWrap, catFoot, search, mode, target, items: null, onKey, category: "", extraCats: [] };
     _pmDialog = d;
 
     search.addEventListener("input", () => renderDialogList(d));
@@ -262,6 +278,7 @@ function renderCategoryBar(d) {
     bar.appendChild(makeTab("全部", ""));
     for (const c of cats) bar.appendChild(makeTab(c, c));
 
+    if (d.catFoot) d.catFoot.innerHTML = "";
     const add = document.createElement("button");
     add.type = "button";
     add.className = "pm-tab pm-tab-add";
@@ -281,7 +298,7 @@ function renderCategoryBar(d) {
             toast(e.message, false);
         }
     });
-    bar.appendChild(add);
+    (d.catFoot || bar).appendChild(add);
 
     const manage = document.createElement("button");
     manage.type = "button";
@@ -291,7 +308,7 @@ function renderCategoryBar(d) {
     manage.addEventListener("click", async () => {
         await openCategoryManageDialog(d);
     });
-    bar.appendChild(manage);
+    (d.catFoot || bar).appendChild(manage);
 }
 
 function renderDialogList(d) {
@@ -585,7 +602,34 @@ async function openCategoryManageDialog(d) {
                 i === cats.length - 1
             );
 
-            row.append(label, renameBtn, upBtn, downBtn);
+            const delBtn = mkBtn(PM_ICONS.del, "删除分类", async () => {
+                const choice = await pmChoiceDialog(
+                    `删除分类「${name}」`,
+                    "请选择删除方式 (该分类下的提示词如何处理):",
+                    [
+                        "删除分类和提示词",
+                        `删除分类, 提示词保留到「${PM_DEFAULT_CATEGORY}」`,
+                    ]
+                );
+                if (choice === null) return;
+                try {
+                    await apiPost("/prompt_manager/categories/delete", {
+                        name,
+                        mode: choice === 0 ? "delete_all" : "keep",
+                    });
+                    cats = cats.filter((c) => c !== name);
+                    toast(
+                        choice === 0
+                            ? `已删除分类及其提示词: ${name}`
+                            : `已删除分类: ${name} (提示词已移到「${PM_DEFAULT_CATEGORY}」)`
+                    );
+                    render();
+                } catch (e) {
+                    toast(e.message, false);
+                }
+            });
+
+            row.append(label, renameBtn, upBtn, downBtn, delBtn);
             listEl.appendChild(row);
         });
     };
@@ -723,7 +767,12 @@ async function renamePromptWithDialog(d, name) {
 }
 
 async function deletePromptWithConfirm(d, name) {
-    if (!confirm(`确定删除提示词 "${name}" 吗？此操作不可撤销。`)) return;
+    const choice = await pmChoiceDialog(
+        `删除提示词「${name}」`,
+        "删除后不可恢复, 确定要删除吗?",
+        ["删除提示词"]
+    );
+    if (choice === null) return;
     try {
         await apiPost("/prompt_manager/delete", { name });
         toast(`已删除: ${name}`);
@@ -922,6 +971,81 @@ function confirmOverwrite(name) {
         });
         dlg.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
         setTimeout(() => ok.focus(), 30);
+    });
+}
+
+function pmChoiceDialog(title, message, options, dangerIndex) {
+    const di = dangerIndex === undefined ? (options || []).length - 1 : dangerIndex;
+    return new Promise((resolve) => {
+        ensureStyles();
+        const mask = document.createElement("div");
+        mask.className = "pm-mask";
+        mask.style.zIndex = "100004";
+        const dlg = document.createElement("div");
+        dlg.className = "pm-dialog pm-dialog-sm";
+
+        const head = document.createElement("div");
+        head.className = "pm-dialog-head";
+        const titleEl = document.createElement("div");
+        titleEl.className = "pm-dialog-title";
+        titleEl.textContent = title;
+        head.appendChild(titleEl);
+
+        const body = document.createElement("div");
+        body.className = "pm-dialog-body";
+        const msg = document.createElement("div");
+        msg.className = "pm-dialog-hint";
+        msg.style.padding = "0";
+        msg.style.whiteSpace = "normal";
+        msg.textContent = message;
+
+        const btns = document.createElement("div");
+        btns.className = "pm-choice-btns";
+        (options || []).forEach((label, i) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "pm-btn pm-choice-btn" + (i === di ? " pm-btn-danger" : "");
+            b.textContent = label;
+            b.addEventListener("click", () => finish(i));
+            btns.appendChild(b);
+        });
+
+        const actions = document.createElement("div");
+        actions.className = "pm-dialog-actions";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "pm-btn";
+        cancel.textContent = "取消";
+        cancel.addEventListener("click", () => finish(null));
+        actions.append(cancel);
+
+        body.append(msg, btns, actions);
+        dlg.append(head, body);
+        mask.appendChild(dlg);
+        document.body.appendChild(mask);
+
+        let done = false;
+        const finish = (v) => {
+            if (done) return;
+            done = true;
+            document.removeEventListener("keydown", onKey, true);
+            try {
+                mask.remove();
+            } catch (e) {
+            }
+            resolve(v);
+        };
+        const onKey = (e) => {
+            if (e.key === "Escape") {
+                e.stopPropagation();
+                finish(null);
+            }
+        };
+        document.addEventListener("keydown", onKey, true);
+        mask.addEventListener("mousedown", (e) => {
+            if (e.target === mask) finish(null);
+        });
+        setTimeout(() => cancel.focus(), 30);
     });
 }
 
@@ -1695,6 +1819,27 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
     font-family:inherit;animation:pm-pop .16s ease;}
 .pm-dialog-sm{width:360px;}
 .pm-dialog-set{width:430px;}
+.pm-dialog-wide{width:560px;height:800px;min-height:0;}
+.pm-dialog-body-row{flex:1;display:flex;min-height:0;height:100%;overflow:hidden;}
+.pm-cat-side{flex:0 0 112px;display:flex;flex-direction:column;min-height:0;
+    border-right:1px solid #343434;background:#1e1e1e;}
+.pm-cat-side-list{flex:1;min-height:0;display:flex;flex-direction:column;gap:2px;
+    padding:10px 6px;overflow-y:auto;}
+.pm-cat-side-list::-webkit-scrollbar{width:6px;}
+.pm-cat-side-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:3px;}
+.pm-cat-side-foot{flex:0 0 auto;display:flex;flex-direction:column;align-items:stretch;
+    gap:2px;padding:6px;border-top:1px solid #343434;}
+.pm-cat-side-foot .pm-tab{width:100%;text-align:center;font-size:13px;}
+.pm-cat-side .pm-tab{display:block;width:100%;text-align:left;padding:7px 10px;font-size:12px;
+    border-radius:6px;}
+.pm-cat-side .pm-tab-on{background:rgba(47,111,221,.24);color:#fff;}
+.pm-cat-side .pm-tab-on::after{content:"";position:absolute;left:8px;right:8px;bottom:1px;
+    height:2px;border-radius:2px;background:#2f6fdd;}
+.pm-cat-side .pm-tab-add,.pm-cat-side .pm-tab-manage{text-align:center;}
+.pm-cat-side-foot .pm-tab-manage{width:100%;}
+.pm-list-col{flex:1;min-width:0;display:flex;flex-direction:column;}
+.pm-list-col .pm-dialog-hint{padding:6px 14px 4px;}
+.pm-list-col .pm-dialog-list{flex:1;}
 @keyframes pm-pop{from{transform:translateY(6px) scale(.98);opacity:.6}to{transform:none;opacity:1}}
 .pm-dialog-head{display:flex;align-items:center;gap:10px;padding:12px 14px;
     border-bottom:1px solid #343434;background:#282828;}
@@ -1774,6 +1919,10 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
 .pm-cat-man-btn svg{width:14px;height:14px;}
 .pm-cat-man-btn-off{opacity:.3;cursor:default;}
 .pm-cat-man-btn-off:hover{background:transparent;color:#b6b6b6;}
+.pm-choice-btns{display:flex;flex-direction:column;gap:6px;}
+.pm-choice-btn{width:100%;}
+.pm-btn-danger{background:#b33;border-color:#b33;color:#fff;}
+.pm-btn-danger:hover{background:#c44;}
 .pm-save-cats{padding:0;flex:1;min-width:0;margin-left:-8px;}
 .pm-cat-group{padding:8px 10px 4px;font-size:11.5px;color:#9fd0ff;letter-spacing:.3px;}
 .pm-save-row{display:flex;align-items:center;gap:8px;}

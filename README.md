@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.3.2-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.3.8-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -64,9 +64,12 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 ## 分类
 
 - 保存时选分类（默认 = 「默认」分类），列表按分类管理提示词
-- 列表弹窗顶部有分类标签条（全部 + 各分类）：点标签只显示该分类内容，列表按分类分组、条目显示所属分类标签
+- 列表弹窗为「左侧分类栏 + 右侧列表」布局：分类纵向排列（全部 / 各分类，选中有高亮底色），
+  点分类只显示该分类内容，条目显示所属分类标签；侧栏底部「+」新建分类、「⚙」分类管理
 - 标签条右侧 **⚙ 分类管理**：每个分类可 **✎ 改名**（该分类下所有提示词自动跟随）、
   **↑ ↓ 调整显示顺序**（顺序持久化到数据库，列表分组也按此顺序），改到已存在的名字会合并进那个分类
+- 分类管理里还能 **🗑 删除分类**，删除前弹确认并提供两种处理方式：
+  ① **删除分类和提示词**（该分类下提示词一起删掉，不可撤销）② **删除分类，提示词保留到「默认」分类**
 - 分类存在数据库里，导出/导入的 JSON 会带上 `category` 字段
 - 旧版本升级：插件启动时自动给数据表加 `category` 列，已有提示词归到「默认」分类，数据不丢
 
@@ -92,7 +95,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 | GET  | `/prompt_manager/categories` | 分类列表（含数量，按排序返回） |
 | POST | `/prompt_manager/categories` | `{name}` 新建分类 |
 | POST | `/prompt_manager/categories/rename` | `{old_name, new_name}` 分类改名（提示词自动跟随） |
-| POST | `/prompt_manager/categories/order` | `{names: [...]}` 保存分类排序 |
+| POST | `/prompt_manager/categories/delete` | `{name, mode}` 删除分类，mode = `delete_all`（连提示词一起删）/ `keep`（提示词移到「默认」） |
 | GET  | `/prompt_manager/all` | 列表弹窗用：名称 + 分类 + 内容预览 + 长度 + 更新时间 |
 | POST | `/prompt_manager/rename` | `{name, new_name}` 提示词改名（重名会被拒绝） |
 | POST | `/prompt_manager/move` | `{name, category}` 修改提示词所属分类 |
@@ -124,6 +127,12 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.3.8 | 2026-09-29 | 删除提示词的确认也改用统一样式弹窗（标题 + 红色「删除提示词」按钮 + 取消），替换浏览器原生 confirm |
+| 1.3.7 | 2026-09-29 | 分类管理新增删除分类：确认弹窗提供两种选择 —— 删除分类和提示词 / 删除分类、提示词保留到「默认」 |
+| 1.3.6 | 2026-09-29 | 底栏「＋ 新建分类」改到「⚙ 分类管理」上方；选中分类恢复底部蓝色指示条（与高亮底色并存） |
+| 1.3.5 | 2026-09-29 | 列表弹窗高度加高到 800；⚙ 分类管理固定到侧栏左下角（＋ 新建分类仍跟在分类列表后面） |
+| 1.3.4 | 2026-09-29 | 列表弹窗固定尺寸（560×440），切换分类/搜索时弹窗不再跟着内容伸缩 |
+| 1.3.3 | 2026-09-29 | 列表弹窗改为「左侧分类栏 + 右侧列表」排版：分类纵向排列、选中高亮，+ / ⚙ 移到侧栏底部，弹窗加宽 |
 | 1.3.2 | 2026-09-29 | 提示词可改名：列表条目悬停出现 ✎ 改名按钮（绿色），改到已存在的名字会被拒绝；后端新增 POST /prompt_manager/rename |
 | 1.3.1 | 2026-09-29 | 保存名称改为按分类自动编号：`分类名_0001`、「默认」分类用 `prompt_0001`，切换分类自动重算（手动改过名称则不覆盖），重名会自动跳号 |
 | 1.3.0 | 2026-09-28 | 分类可改名、可排序：分类标签条新增 ⚙ 分类管理弹窗（✎ 改名 + ↑↓ 调整顺序）；后端 pm_categories 增加 sort_order 列并新增 rename / order 接口，列表分组顺序跟随自定义排序 |

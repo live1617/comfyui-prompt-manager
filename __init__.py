@@ -8,7 +8,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.3.2"
+__version__ = "1.3.8"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:
@@ -145,6 +145,21 @@ try:
                 "category": category,
                 "categories": db.list_categories(),
             }
+        )
+
+    @routes.post("/prompt_manager/categories/delete")
+    async def delete_category_handler(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体必须是 JSON"}, status=400)
+        name = (data.get("name") or "").strip()
+        mode = (data.get("mode") or "keep").strip()
+        if not name:
+            return web.json_response({"error": "分类名称不能为空"}, status=400)
+        result = db.delete_category(name, mode == "delete_all")
+        return web.json_response(
+            {"ok": True, "name": name, "mode": mode, **result, "categories": db.list_categories()}
         )
 
     @routes.get("/prompt_manager/list")

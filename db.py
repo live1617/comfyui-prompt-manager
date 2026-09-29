@@ -203,6 +203,31 @@ def rename_category(old: str, new: str) -> bool:
         finally:
             conn.close()
 
+def delete_category(name: str, delete_prompts: bool = False) -> dict:
+    cat = normalize_category(name)
+    result = {"deleted": 0, "moved": 0}
+    with _lock:
+        conn = get_conn()
+        try:
+            if delete_prompts:
+                cur = conn.execute("DELETE FROM prompts WHERE category = ?", (cat,))
+                result["deleted"] = cur.rowcount
+            else:
+                cur = conn.execute(
+                    "UPDATE prompts SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE category = ?",
+                    (DEFAULT_CATEGORY, cat),
+                )
+                result["moved"] = cur.rowcount
+                conn.execute(
+                    "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
+                    (DEFAULT_CATEGORY, _next_order(conn)),
+                )
+            conn.execute("DELETE FROM pm_categories WHERE name = ?", (cat,))
+            conn.commit()
+            return result
+        finally:
+            conn.close()
+
 def set_category_order(names: list) -> None:
     with _lock:
         conn = get_conn()
