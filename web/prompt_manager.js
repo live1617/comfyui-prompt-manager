@@ -3,7 +3,7 @@ import { api } from "../../scripts/api.js";
 
 console.log("[PromptManager] 前端扩展 JS 已加载");
 
-const PM_VERSION = "1.3.8";
+const PM_VERSION = "1.3.9";
 
 function toast(msg, ok = true) {
     console.log(`[PromptManager] ${ok ? "✅" : "❌"} ${msg}`);
@@ -1923,7 +1923,11 @@ html[data-pm-pos="tr"] .pm-pill,html[data-pm-pos="br"] .pm-pill{left:auto;right:
 .pm-choice-btn{width:100%;}
 .pm-btn-danger{background:#b33;border-color:#b33;color:#fff;}
 .pm-btn-danger:hover{background:#c44;}
-.pm-save-cats{padding:0;flex:1;min-width:0;margin-left:-8px;}
+.pm-save-cats{padding:0;flex:1;min-width:0;margin-left:-8px;display:flex;flex-wrap:wrap;
+    row-gap:2px;max-height:96px;overflow-y:auto;}
+.pm-save-cats::-webkit-scrollbar{width:6px;}
+.pm-save-cats::-webkit-scrollbar-thumb{background:rgba(255,255,255,.2);border-radius:3px;}
+.pm-save-cats .pm-tab{padding:5px 10px;font-size:12px;}
 .pm-cat-group{padding:8px 10px 4px;font-size:11.5px;color:#9fd0ff;letter-spacing:.3px;}
 .pm-save-row{display:flex;align-items:center;gap:8px;}
 .pm-save-label{flex:0 0 36px;font-size:12.5px;color:#bbb;}

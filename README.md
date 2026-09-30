@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.3.8-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.3.9-blue" alt="version"> <img src="https://img.shields.io/badge/license-MIT-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -127,6 +127,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.3.9 | 2026-09-30 | 保存弹窗分类条支持换行显示（分类多时不再被截断，标签略缩小；极端情况区域内滚动） |
 | 1.3.8 | 2026-09-29 | 删除提示词的确认也改用统一样式弹窗（标题 + 红色「删除提示词」按钮 + 取消），替换浏览器原生 confirm |
 | 1.3.7 | 2026-09-29 | 分类管理新增删除分类：确认弹窗提供两种选择 —— 删除分类和提示词 / 删除分类、提示词保留到「默认」 |
 | 1.3.6 | 2026-09-29 | 底栏「＋ 新建分类」改到「⚙ 分类管理」上方；选中分类恢复底部蓝色指示条（与高亮底色并存） |
