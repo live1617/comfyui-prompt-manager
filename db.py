@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 comfyui-prompt-manager contributors
 import os
 import sqlite3
 import threading
@@ -112,6 +114,76 @@ def delete_prompt(name: str) -> bool:
             return cur.rowcount > 0
         finally:
             conn.close()
+
+def find_duplicates(preview_len: int = 120) -> list:
+    """按内容查重, 返回内容完全相同的提示词组。
+
+    内容比较用 _norm_text 归一化 (统一换行符 + 去首尾空白)。
+    名称由数据库 UNIQUE 约束保证不重复 (保存/导入时都不允许重名), 因此不做同名检查。
+    """
+    with _lock:
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT name,
+                       category,
+                       text,
+                       length(text) AS text_len,
+                       updated_at
+                FROM prompts
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+
+    groups = {}
+    for r in rows:
+        body = _norm_text(r["text"])
+        if not body:
+            continue
+        groups.setdefault(body, []).append(
+            {
+                "name": r["name"],
+                "category": r["category"] or DEFAULT_CATEGORY,
+                "text_len": r["text_len"],
+                "updated_at": r["updated_at"] or "",
+            }
+        )
+
+    result = []
+    for body, items in groups.items():
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda x: x["name"])
+        result.append(
+            {
+                "preview": body[:preview_len],
+                "text_len": items[0]["text_len"],
+                "count": len(items),
+                "items": items,
+            }
+        )
+    result.sort(key=lambda g: (-g["count"], g["preview"]))
+    return result
+
+
+def delete_prompts(names: list) -> int:
+    clean = [n for n in (names or []) if isinstance(n, str) and n.strip()]
+    if not clean:
+        return 0
+    with _lock:
+        conn = get_conn()
+        try:
+            marks = ",".join("?" * len(clean))
+            cur = conn.execute(
+                f"DELETE FROM prompts WHERE name IN ({marks})", clean
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
 
 def move_prompt(name: str, category: str) -> bool:
     cat = normalize_category(category)
@@ -307,23 +379,91 @@ def export_all() -> dict:
         finally:
             conn.close()
 
-def import_data(prompts: list, overwrite: bool = True) -> dict:
-    imported, skipped = 0, 0
+def _norm_text(text) -> str:
+    """内容判重用的归一化: 统一换行符 + 去首尾空白 (与排重复的 trim 语义一致)"""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _suggest_import_name(base: str, taken: set) -> str:
+    """冲突改名建议: 原名后加 (2) / (3) ... 直到不与已有名字撞车"""
+    i = 2
+    while True:
+        cand = "{} ({})".format(base, i)
+        if cand not in taken:
+            return cand
+        i += 1
+
+
+def import_data(
+    prompts: list,
+    overwrite: bool = False,
+    dedupe_by_content: bool = True,
+    preview_len: int = 120,
+) -> dict:
+    """导入提示词。
+
+    默认策略 = 纯增加:
+      - 名称为空            → 跳过 (无效条目)
+      - 库里已有同名且内容相同 → 跳过 (真重复)
+      - 库里已有同名但内容不同 → 冲突: 不导入, 返回到 conflicts 里让前端提示改名
+      - 内容已存在 (归一化后与库中任一条完全相同) → 跳过
+      - 文件内部自重复      → 只入第一条
+      - 其余                → 新增
+    overwrite=True 时不按名称跳过, 同名会被覆盖更新 (内容判重仍然生效)。
+    """
+    imported = 0
+    skipped_empty = 0     # 名称为空
+    skipped_name = 0      # 与库中同名且内容相同
+    skipped_content = 0   # 内容已存在 (库里或文件内)
+    conflicts = []        # 同名但内容不同: 需改名后再导入
     with _lock:
         conn = get_conn()
         try:
+            stored = {}       # 库中 name -> 原文
+            body_set = set()
+            for r in conn.execute("SELECT name, text FROM prompts"):
+                stored[r["name"]] = r["text"] or ""
+                body = _norm_text(r["text"])
+                if body:
+                    body_set.add(body)
+
+            taken = set(stored.keys())
+
             for item in prompts:
                 name = (item.get("name") or "").strip()
                 text = item.get("text") or ""
                 if not name:
-                    skipped += 1
+                    skipped_empty += 1
                     continue
-                exists = conn.execute(
-                    "SELECT 1 FROM prompts WHERE name = ?", (name,)
-                ).fetchone()
-                if exists and not overwrite:
-                    skipped += 1
+                body = _norm_text(text)
+
+                if name in taken and name in stored:
+                    if overwrite:
+                        pass  # 覆盖模式: 直接走下面的 upsert
+                    elif body == _norm_text(stored[name]):
+                        # 同名同内容 → 真重复, 跳过
+                        skipped_name += 1
+                        continue
+                    else:
+                        # 同名但内容不同 → 交给用户改名
+                        suggested = _suggest_import_name(name, taken)
+                        taken.add(suggested)
+                        conflicts.append(
+                            {
+                                "name": name,
+                                "suggested": suggested,
+                                "text": text,
+                                "category": normalize_category(item.get("category")),
+                                "existing_preview": _norm_text(stored[name])[:preview_len],
+                                "incoming_preview": body[:preview_len],
+                            }
+                        )
+                        continue
+                elif dedupe_by_content and body and body in body_set:
+                    # 名字不同但内容完全一样 → 视为重复, 跳过
+                    skipped_content += 1
                     continue
+
                 conn.execute(
                     """
                     INSERT INTO prompts(name, text, category) VALUES(?, ?, ?)
@@ -334,8 +474,20 @@ def import_data(prompts: list, overwrite: bool = True) -> dict:
                     """,
                     (name, text, normalize_category(item.get("category"))),
                 )
+                taken.add(name)
+                stored[name] = text
+                if body:
+                    body_set.add(body)
                 imported += 1
             conn.commit()
         finally:
             conn.close()
-    return {"imported": imported, "skipped": skipped}
+    return {
+        "imported": imported,
+        "skipped": skipped_empty + skipped_name + skipped_content,
+        "skipped_empty": skipped_empty,
+        "skipped_name": skipped_name,
+        "skipped_content": skipped_content,
+        "conflicted": len(conflicts),
+        "conflicts": conflicts,
+    }
