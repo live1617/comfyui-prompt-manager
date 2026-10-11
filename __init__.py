@@ -13,7 +13,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.4.45"
+__version__ = "1.4.63"
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:
@@ -30,21 +30,41 @@ try:
 except ImportError:
     db = _load_local("prompt_manager_db", "db.py")
 
+try:
+    from . import log as pm_log
+except ImportError:
+    pm_log = _load_local("prompt_manager_log", "log.py")
+
 NODE_CLASS_MAPPINGS = {}
 
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
 WEB_DIRECTORY = "./web"
 
-LOG_PATH = os.path.join(PLUGIN_DIR, "prompt_manager_error.log")
+# 错误日志位置: 与数据库同一套规则 (user 目录), 不放在插件安装目录里
+# (更新插件常是「删旧文件夹解压新版」, 放安装目录里会被一起删掉)
+LOG_PATH = pm_log.LOG_PATH
+
+def _pm_int(request, key, default=0, lo=0, hi=100000):
+    """取 URL 里的整数参数, 非法/越界一律回落到 default (不抛异常)"""
+    raw = request.query.get(key)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        v = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def _pm_str(request, key):
+    v = request.query.get(key)
+    return (v or "").strip() if isinstance(v, str) else ""
+
 
 def _log_error(text: str):
-    print(f"[PromptManager] {text}")
-    try:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(text + "\n")
-    except Exception:
-        pass
+    """写错误日志 (控制台 + 文件); 超上限自动轮转, 任何失败都静默 — 见 log.py"""
+    pm_log.log_error(text, log_path=LOG_PATH)
 
 try:
     from server import PromptServer
@@ -169,9 +189,21 @@ try:
 
     @routes.get("/prompt_manager/duplicates")
     async def duplicates_handler(request):
-        groups = db.find_duplicates()
+        # 分页参数可选: 不传就是取全部 (旧行为)
+        q = _pm_str(request, "q") or None
+        limit = _pm_int(request, "limit", 0)
+        offset = _pm_int(request, "offset", 0)
+        groups = db.find_duplicates(q=q, limit=limit, offset=offset)
+        total = db.count_duplicate_groups(q=q)
         return web.json_response(
-            {"ok": True, "groups": groups, "total": len(groups)}
+            {
+                "ok": True,
+                "groups": groups,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": bool(limit > 0 and offset + len(groups) < total),
+            }
         )
 
     @routes.post("/prompt_manager/dedupe")
@@ -240,7 +272,40 @@ try:
 
     @routes.get("/prompt_manager/all")
     async def all_handler(request):
-        return web.json_response({"ok": True, "items": db.list_items()})
+        # q=关键字 / category=分类 / offset+limit=分页 (都不传就是取全部, 旧行为)
+        q = _pm_str(request, "q") or None
+        category = _pm_str(request, "category") or None
+        limit = _pm_int(request, "limit", 0)
+        offset = _pm_int(request, "offset", 0)
+        total = db.count_items(category=category, q=q)
+        items = db.list_items(category=category, q=q, limit=limit, offset=offset)
+        return web.json_response(
+            {
+                "ok": True,
+                "items": items,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": bool(limit > 0 and offset + len(items) < total),
+            }
+        )
+
+    @routes.get("/prompt_manager/version")
+    async def version_handler(request):
+        return web.json_response({"ok": True, "version": __version__})
+
+    @routes.get("/prompt_manager/health")
+    async def health_handler(request):
+        """自检: 库路径/大小/journal 模式/备份份数 + 完整性检查结果
+
+        完整性检查放线程里跑, 免得库大时卡住事件循环。
+        """
+        loop = asyncio.get_event_loop()
+        ok, detail = await loop.run_in_executor(None, db.check_integrity)
+        info = await loop.run_in_executor(None, db.db_health)
+        info["integrity_ok"] = ok
+        info["integrity_detail"] = detail
+        return web.json_response({"ok": True, "health": info})
 
     IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
@@ -795,6 +860,140 @@ try:
         return web.json_response({"ok": True, "name": name})
 
     # ---- 图库元数据: 读图片里嵌入的提示词 (ComfyUI prompt / A1111 parameters) ----
+    def _workflow_blocks(wf) -> list:
+        """UI workflow (graph 格式) 兜底提取提示词, 返回 [{label, text}]
+
+        prompt JSON 里文本字段是链接时 (MuyeText / PrimitiveString 等自定义
+        文本节点), 字面文本只存在 workflow 节点的 widgets_values 里。
+        """
+        out = []
+        if not isinstance(wf, dict):
+            return out
+        nodes = [n for n in (wf.get("nodes") or []) if isinstance(n, dict)]
+        if not nodes:
+            return out
+        by_id = {}
+        for n in nodes:
+            by_id[n.get("id")] = n
+        link_src = {}
+        for l in wf.get("links") or []:
+            if isinstance(l, (list, tuple)) and len(l) >= 4:
+                try:
+                    link_src[l[0]] = l[1]
+                except (TypeError, ValueError):
+                    pass
+
+        def node_widget_text(n):
+            """文本编码类节点上 widgets_values 里的字面文本 (强信号)"""
+            t = str(n.get("type", "")).lower()
+            if not ("clip" in t and "encode" in t) and "textencode" not in t:
+                return None
+            wv = n.get("widgets_values")
+            if not isinstance(wv, list):
+                return None
+            for v in wv:
+                if isinstance(v, str) and v.strip():
+                    return v
+            return None
+
+        def node_weak_text(n):
+            """兜底: 任意文本类节点里较长且带空格的字面文本 (排除工具节点)"""
+            t = str(n.get("type", "")).lower()
+            if "text" not in t and "prompt" not in t and "string" not in t:
+                return None
+            if any(
+                k in t
+                for k in ("concat", "combine", "switch", "index", "replace",
+                          "trim", "length", "join", "count", "stack")
+            ):
+                return None
+            wv = n.get("widgets_values")
+            if not isinstance(wv, list):
+                return None
+            for v in wv:
+                if isinstance(v, str) and len(v.strip()) >= 20 and " " in v:
+                    return v
+            return None
+
+        # 采样器正/负向输入的源节点 (用于给文本标注 正向/反向)
+        sampler_pos, sampler_neg = [], []
+        for n in nodes:
+            t = str(n.get("type", "")).lower()
+            if "sampler" not in t and "ksample" not in t:
+                continue
+            for inp in n.get("inputs") or []:
+                if not isinstance(inp, dict):
+                    continue
+                lid = inp.get("link")
+                src = link_src.get(lid) if isinstance(lid, int) else None
+                if src is None:
+                    continue
+                if inp.get("name") == "positive":
+                    sampler_pos.append(src)
+                elif inp.get("name") == "negative":
+                    sampler_neg.append(src)
+
+        def chain_texts(start_ids, getter):
+            """从源节点向上游找文本 widget (找到即停, 不再穿过它)"""
+            texts = []
+            seen = set()
+            queue = list(start_ids)
+            while queue and len(texts) < 4:
+                nid = queue.pop(0)
+                if nid in seen:
+                    continue
+                seen.add(nid)
+                n = by_id.get(nid)
+                if not isinstance(n, dict):
+                    continue
+                t = getter(n)
+                if t:
+                    if t not in texts:
+                        texts.append(t)
+                    continue  # 该节点自身有文本, 不再向上游找
+                for inp in n.get("inputs") or []:
+                    if not isinstance(inp, dict):
+                        continue
+                    lid = inp.get("link")
+                    src = link_src.get(lid) if isinstance(lid, int) else None
+                    if src is not None:
+                        queue.append(src)
+            return texts
+
+        pos_texts = chain_texts(sampler_pos, node_widget_text)
+        neg_texts = chain_texts(sampler_neg, node_widget_text)
+
+        seen = set()
+        for n in nodes:
+            t = node_widget_text(n)
+            if not t:
+                continue
+            if t in seen:
+                continue
+            seen.add(t)
+            if t in pos_texts:
+                label = "正向提示词"
+            elif t in neg_texts:
+                label = "反向提示词"
+            else:
+                label = "提示词"
+            out.append({"label": label, "text": t})
+
+        # 没有 CLIPTextEncode 类 widget 时, 放宽到任意文本类节点
+        if not out:
+            seen2 = set()
+            for n in nodes:
+                t = node_weak_text(n)
+                if t and t not in seen2:
+                    seen2.add(t)
+                    label = "提示词"
+                    if t in pos_texts:
+                        label = "正向提示词"
+                    elif t in neg_texts:
+                        label = "反向提示词"
+                    out.append({"label": label, "text": t})
+        return out
+
     def _extract_prompt_blocks(info: dict) -> list:
         """从 PNG/JPEG 文本块提取提示词, 返回 [{label, text}]"""
         blocks = []
@@ -821,50 +1020,66 @@ try:
             try:
                 data = json.loads(raw)
             except Exception:
-                return blocks
-            if not isinstance(data, dict):
-                return blocks
+                data = None
+            if isinstance(data, dict):
+                # 通过采样器节点的 positive/negative 链接判断正/反向
+                pos_ids, neg_ids = set(), set()
+                for node in data.values():
+                    if not isinstance(node, dict):
+                        continue
+                    ct = str(node.get("class_type", "")).lower()
+                    inputs = node.get("inputs")
+                    if not isinstance(inputs, dict):
+                        continue
+                    if "sampler" in ct or "ksample" in ct:
+                        for key, ids in (("positive", pos_ids), ("negative", neg_ids)):
+                            v = inputs.get(key)
+                            if isinstance(v, list) and v and isinstance(v[0], str):
+                                ids.add(v[0])
 
-            # 通过采样器节点的 positive/negative 链接判断正/反向
-            pos_ids, neg_ids = set(), set()
-            for node in data.values():
-                if not isinstance(node, dict):
-                    continue
-                ct = str(node.get("class_type", "")).lower()
-                inputs = node.get("inputs")
-                if not isinstance(inputs, dict):
-                    continue
-                if "sampler" in ct or "ksample" in ct:
-                    for key, ids in (("positive", pos_ids), ("negative", neg_ids)):
-                        v = inputs.get(key)
-                        if isinstance(v, list) and v and isinstance(v[0], str):
-                            ids.add(v[0])
+                seen = set()
+                for nid, node in data.items():
+                    if not isinstance(node, dict):
+                        continue
+                    ct = str(node.get("class_type", "")).lower()
+                    inputs = node.get("inputs")
+                    if not isinstance(inputs, dict):
+                        continue
+                    t = inputs.get("text")
+                    if not isinstance(t, str) or not t.strip():
+                        continue
+                    is_encode = ("clip" in ct and "encode" in ct) or "text" in ct
+                    if not is_encode:
+                        continue
+                    if nid in pos_ids:
+                        label = "正向提示词"
+                    elif nid in neg_ids:
+                        label = "反向提示词"
+                    else:
+                        label = "提示词"
+                    key = (label, t)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    blocks.append({"label": label, "text": t})
 
-            seen = set()
-            for nid, node in data.items():
-                if not isinstance(node, dict):
-                    continue
-                ct = str(node.get("class_type", "")).lower()
-                inputs = node.get("inputs")
-                if not isinstance(inputs, dict):
-                    continue
-                t = inputs.get("text")
-                if not isinstance(t, str) or not t.strip():
-                    continue
-                is_encode = ("clip" in ct and "encode" in ct) or "text" in ct
-                if not is_encode:
-                    continue
-                if nid in pos_ids:
-                    label = "正向提示词"
-                elif nid in neg_ids:
-                    label = "反向提示词"
-                else:
-                    label = "提示词"
-                key = (label, t)
-                if key in seen:
-                    continue
-                seen.add(key)
-                blocks.append({"label": label, "text": t})
+        # 兜底: prompt JSON 里文本字段是链接 (MuyeText / PrimitiveString 等
+        # 自定义文本节点) 时, 字面文本只存在 UI workflow 的 widgets_values 里
+        wf_raw = info.get("workflow")
+        wf_data = None
+        if isinstance(wf_raw, str) and wf_raw.strip():
+            try:
+                wf_data = json.loads(wf_raw)
+            except Exception:
+                wf_data = None
+        elif isinstance(wf_raw, dict):
+            wf_data = wf_raw
+        if isinstance(wf_data, dict):
+            have = {b["text"] for b in blocks}
+            for b in _workflow_blocks(wf_data):
+                if b["text"] not in have:
+                    have.add(b["text"])
+                    blocks.append(b)
         return blocks
 
     # ---- 生成参数: 种子/步数/CFG/降噪/采样/调度 (供大图查看器底部参数区) ----
@@ -896,7 +1111,8 @@ try:
                 for key, label, names in mapping:
                     for n in names:
                         if n in pairs and pairs[n]:
-                            out.append({"label": label, "value": pairs[n]})
+                            # key 是机器可读的字段名, 供「套用参数到画布」认 widget
+                            out.append({"key": key, "label": label, "value": pairs[n]})
                             break
                 return out
             return []
@@ -939,17 +1155,17 @@ try:
             out = []
             seed = _num("seed") or _num("noise_seed")
             if seed:
-                out.append({"label": "种子 (seed)", "value": seed})
+                out.append({"key": "seed", "label": "种子 (seed)", "value": seed})
             if _num("steps"):
-                out.append({"label": "步数", "value": _num("steps")})
+                out.append({"key": "steps", "label": "步数", "value": _num("steps")})
             if _num("cfg"):
-                out.append({"label": "CFG 引导系数", "value": _num("cfg")})
+                out.append({"key": "cfg", "label": "CFG 引导系数", "value": _num("cfg")})
             if _num("denoise"):
-                out.append({"label": "降噪", "value": _num("denoise")})
+                out.append({"key": "denoise", "label": "降噪", "value": _num("denoise")})
             if _txt("sampler_name"):
-                out.append({"label": "采样", "value": _txt("sampler_name")})
+                out.append({"key": "sampler", "label": "采样", "value": _txt("sampler_name")})
             if _txt("scheduler"):
-                out.append({"label": "调度", "value": _txt("scheduler")})
+                out.append({"key": "scheduler", "label": "调度", "value": _txt("scheduler")})
             return out
         return []
 
@@ -982,6 +1198,52 @@ try:
         except Exception:
             pass
         return result
+
+    def _image_workflow(path: str) -> dict:
+        """取图片内嵌的工作流 (UI graph 格式), 供「载入此图工作流」回填画布"""
+        result = {"ok": True, "has_workflow": False, "workflow": None}
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                info = {}
+                text = getattr(img, "text", None)
+                if isinstance(text, dict):
+                    info.update(text)
+                for k, v in (img.info or {}).items():
+                    info.setdefault(k, v)
+                raw = info.get("workflow")
+                if isinstance(raw, str) and raw.strip():
+                    result["workflow"] = json.loads(raw)
+                elif isinstance(raw, dict):
+                    result["workflow"] = raw
+        except Exception as e:
+            result["error"] = str(e)
+        result["has_workflow"] = bool(result.get("workflow"))
+        return result
+
+    @routes.get("/prompt_manager/workflow")
+    async def workflow_handler(request):
+        kind = (request.query.get("type") or "output").strip().lower()
+        if kind not in ("output", "input", "custom"):
+            kind = "output"
+        custom = (request.query.get("path") or "").strip()
+        filename = (request.query.get("filename") or "").strip()
+        subfolder = (request.query.get("subfolder") or "").strip()
+        if not filename:
+            return web.json_response({"error": "缺少 filename"}, status=400)
+        root, kind = _root_for(kind, custom)
+        target = os.path.normpath(os.path.join(root, subfolder))
+        if os.path.commonpath([root, target]) != root:
+            return web.json_response({"error": "非法路径"}, status=400)
+        path = os.path.normpath(os.path.join(target, os.path.basename(filename)))
+        if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+            return web.json_response({"error": "文件不存在"}, status=404)
+        try:
+            data = await asyncio.to_thread(_image_workflow, path)
+        except AttributeError:
+            data = _image_workflow(path)
+        return web.json_response(data)
 
     @routes.get("/prompt_manager/meta")
     async def meta_handler(request):
@@ -1069,6 +1331,32 @@ try:
         f"[PromptManager] 加载成功 v{__version__} (无需添加节点)"
         f" | 数据库: {db.DB_PATH}"
     )
+
+    def _pm_health_probe():
+        """后台跑一次数据库自检: 损坏就写错误日志 + 控制台明确提示 (不阻塞启动)"""
+        ok, detail = db.check_integrity()
+        if ok:
+            print(f"[PromptManager] 数据库自检通过 | {db.DB_PATH}")
+            return
+        _log_error(
+            "数据库完整性检查未通过: {}\n"
+            "  文件: {}\n"
+            "  可从同目录的 *.bak 备份里挑一份改名成 prompt_manager.db 覆盖回去 (详见 README)".format(
+                detail, db.DB_PATH
+            )
+        )
+        print(
+            "[PromptManager] 数据库自检未通过! 详见错误日志; "
+            "可用同目录 .bak 备份恢复"
+        )
+
+    # 延迟几秒再跑: 别跟 ComfyUI 启动时的磁盘 IO 抢
+    try:
+        _t = threading.Timer(8.0, _pm_health_probe)
+        _t.daemon = True  # 守护线程, 不阻止进程退出
+        _t.start()
+    except Exception:
+        pass
 
 except Exception:
     _log_error("路由注册失败:\n" + traceback.format_exc())

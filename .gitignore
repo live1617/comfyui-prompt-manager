@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 运行时生成的数据 (每人不同, 不要提交)
+prompt_manager.db
+prompt_manager.db.*.bak
+prompt_manager_error.log
+prompt_manager_export.json
+tests/_pm_meta_test.png
+
+# 打包产物
+*.zip
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

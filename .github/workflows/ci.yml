@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 测试 (${{ matrix.os }} / Python ${{ matrix.python-version }} / Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 这个插件有大量 Windows 特有逻辑 —— 移入回收站 (send2trash / SHFileOperationW)、
+        # 路径分隔符与中文文件名、safe-delete 拦截。只在 ubuntu 上跑等于把那些分支全漏掉,
+        # 所以两个平台都跑。
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+        node-version: ["20"]
+    env:
+      # Windows runner 默认 cp1252, 测试脚本里的中文与 ✅ 会 UnicodeEncodeError
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 准备 Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: 安装测试依赖
+        # send2trash 是「移入回收站」的首选实现, ComfyUI 自己也带它, 装上才贴近真实环境
+        # (装不上时插件会走 SHFileOperationW 兜底, 测试同样覆盖得到)
+        run: python -m pip install --upgrade pip pillow send2trash
+
+      - name: 跑全套测试
+        run: python tests/run_all.py
+
+  version:
+    name: 版本号一致性
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 校验六处版本号
+        run: python tests/check_version.py
+
+      - name: 打 tag 时校验与 tag 一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python tests/check_version.py "${GITHUB_REF_NAME#v}"
