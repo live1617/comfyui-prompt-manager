@@ -13,7 +13,18 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.4.63"
+__version__ = "1.4.64"
+
+# 英文 Windows 的控制台/管道默认编码是 cp1252, 打印中文会抛 UnicodeEncodeError。
+# 这里只打开「错误容错」(不改编码, 控制台里中文照常显示), 免得一句 print 把后面的
+# 初始化带崩 —— CI 上真踩到了: "加载成功"那行 print 一挂, 同一个 try 里后面的
+# 后台数据库巡检也不会启动。
+for _pm_stream in (sys.stdout, sys.stderr):
+    try:
+        _pm_stream.reconfigure(errors="replace")
+    except Exception:
+        pass
+del _pm_stream
 
 def _load_local(module_key: str, filename: str):
     if module_key in sys.modules:

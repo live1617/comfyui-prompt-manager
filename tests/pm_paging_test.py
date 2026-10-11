@@ -80,7 +80,7 @@ def load_db():
         "_pm_paging_db_%d" % _db_n[0], os.path.join(plugin, "db.py")
     )
     mod = importlib.util.module_from_spec(spec)
-    with contextlib.redirect_stdout(open(os.devnull, "w")):
+    with contextlib.redirect_stdout(open(os.devnull, "w", encoding="utf-8")):
         spec.loader.exec_module(mod)
     return mod
 
@@ -196,7 +196,7 @@ print("\n[9] 接口层: /prompt_manager/all 的查询参数")
 sys.path.insert(0, PKG)
 spec = importlib.util.spec_from_file_location("pm_plugin", os.path.join(PKG, "__init__.py"))
 plugin_mod = importlib.util.module_from_spec(spec)
-with contextlib.redirect_stdout(open(os.devnull, "w")):
+with contextlib.redirect_stdout(open(os.devnull, "w", encoding="utf-8")):
     spec.loader.exec_module(plugin_mod)
 
 all_handler = REG[("GET", "/prompt_manager/all")]

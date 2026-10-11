@@ -107,6 +107,21 @@ def check(desc, cond):
     print(("  OK  " if cond else " FAIL ") + desc)
 
 
+def same_path(a, b):
+    """两个路径是否指向同一处
+
+    Windows 上临时目录可能是 8.3 短名 (C:\\Users\\RUNNER~1\\AppData\\...), os.path.realpath
+    会把它展开成长名; 而插件返回的是 abspath+normpath 后的原样路径 —— 直接比字符串会在
+    短名环境下误报 (GitHub 的 windows runner 就是这样)。两边统一 realpath+normcase 再比。
+    """
+    if not a or not b:
+        return a == b
+    try:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+    except Exception:
+        return a == b
+
+
 def make_img(name, folder, subfolder=""):
     p = os.path.join(folder, subfolder, name) if subfolder else os.path.join(folder, name)
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -209,7 +224,7 @@ async def main():
     r = await dirs(FakeRequest({}, {"path": tmp_root}))
     names = [d["name"] for d in r.payload["dirs"]]
     check("dirs 列出子目录", "我的图片" in names and "output" in names)
-    check("dirs 返回父目录", r.payload.get("parent") == os.path.dirname(os.path.realpath(tmp_root)))
+    check("dirs 返回父目录", same_path(r.payload.get("parent"), os.path.dirname(os.path.realpath(tmp_root))))
     r = await dirs(FakeRequest({}, {"path": os.path.join(tmp_root, "不存在")}))
     check("dirs 路径不存在 -> 404", r.status == 404)
 
