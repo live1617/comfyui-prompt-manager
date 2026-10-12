@@ -627,6 +627,33 @@ const testCode = `
         "缓存不完整时 pmKnownItems 会重新拉全量 (不拿分页数据判重名)"
     );
 
+    // 9h. 工具条「提示词列表」按钮必须调 openPromptDialog (v1.4.66 回归的回归测试:
+    // 注意这只能抓「按钮接错回调」; 「忘了 import」在 bundle 里同作用域、这里测不出,
+    // 那种由 pm_modules_check.js 第 9 项跨模块符号对账负责)
+    {
+        const fakeTarget = { node: { id: 1 }, widget: { name: "text" }, widgetName: "text" };
+        const tbBtns = makeToolbarButtons(fakeTarget);
+        const listEntry = tbBtns.find((b) => (b[1] || "").indexOf("提示词列表") >= 0);
+        assert(!!listEntry, "工具条按钮组里有「提示词列表」");
+        const origOPD = openPromptDialog;
+        let spyArgs = null;
+        openPromptDialog = (...a) => { spyArgs = a; return Promise.resolve(); };
+        try {
+            const tbEl = createToolbarElement(tbBtns);
+            const listBtn = [...tbEl.el.children[0].children].find(
+                (c) => (c.title || "").indexOf("提示词列表") >= 0
+            );
+            assert(!!listBtn, "工具条元素里有列表按钮");
+            listBtn.dispatch("click");
+            assert(
+                !!spyArgs && spyArgs[0] === fakeTarget && spyArgs[1] === "load",
+                "点击列表按钮会调 openPromptDialog(target, 'load')"
+            );
+        } finally {
+            openPromptDialog = origOPD;
+        }
+    }
+
     // 10. 顶栏按钮: 图标为 ✏, 点击弹出三按钮浮层
     ext.setup(); // 触发 installTopbarButton (桩环境挂不上顶栏, 按钮为游离节点, 不影响逻辑测试)
     assert(S.topbarBtn && S.topbarBtn._html === PM_ICONS.trigger, "顶栏图标为 ✏ 笔");
