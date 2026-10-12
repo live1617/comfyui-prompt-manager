@@ -1,8 +1,12 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.4.64-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.4.65-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
+
+![文本框里的工具条](assets/01-toolbar.png)
+
+平时只显示一个 ✏ 小图标，鼠标移上去才展开成 **保存 / 列表 / 设置** 三个按钮，不占地方也不挡文字。
 
 ## 安装
 
@@ -56,6 +60,13 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 平时图标**不带背景圈**（就是裸的描边小图标），悬停展开时才出现浅色底板承载按钮组。
 
 对话框支持 `Esc` / 点击遮罩关闭。每个文本框独立一套工具条，互不干扰。
+
+**提示词列表**是「左侧分类栏 + 右侧列表」的布局：条目显示名称、内容预览与分类标签，
+顶部有搜索框（搜名称或内容），鼠标悬停条目会出现改名（✎）和移动（📤）小按钮。
+
+**保存**时名称按分类自动编号（`分类名_0001`），可顺手选分类，同名会先问是否覆盖：
+
+![保存提示词](assets/03-save.png)
 
 ## 分类
 
@@ -127,6 +138,8 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 
 - 图标默认透明度：工具条 **⚙ 设置** 面板里可调（保存在浏览器，默认 55%）
 - 图标位置：工具条 **⚙ 设置** 面板里可选（左下 / 右下 / 左上 / 右上，默认左下）
+
+![工具条设置](assets/04-settings.png)
 
 ## 常见问题
 

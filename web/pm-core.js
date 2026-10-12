@@ -7,7 +7,7 @@ import { api } from "../../scripts/api.js";
 
 let _pmItemsCache = null;
 let _pmItemsCacheFull = false;
-export const PM_VERSION = "1.4.64";
+export const PM_VERSION = "1.4.65";
 
 // 界面上显示的许可证 —— 必须与 pyproject.toml 的 license 一致
 // (v1.4.60 之前设置对话框里写死了 "MIT License", 与实际的 GPL-3.0 不符)
