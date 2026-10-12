@@ -5,6 +5,7 @@
 import { app } from "../../scripts/app.js";
 import { PM_ICONS, PM_LICENSE, PM_MIN_OPACITY, PM_VERSION, applyPmSettings, isTextWidget, pmSettings, resolveDeepestWidget, savePmSettings } from "./pm-core.js";
 import { closeSaveDialog, saveWithDialog } from "./pm-save.js";
+import { openPromptDialog } from "./pm-list.js";
 import { S } from "./pm-state.js";
 import { ensureStyles } from "./pm-styles.js";
 export function injectToolbars(node, attempt = 0) {

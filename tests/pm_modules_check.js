@@ -153,5 +153,40 @@ check(
 const entrySrc = fs.readFileSync(path.join(WEB, ENTRY), "utf8");
 check(/app\.registerExtension\(/.test(entrySrc), "入口仍持有 app.registerExtension");
 
+// --- 9. 跨模块导出符号对账 (不依赖命名约定) ---
+// 第 6 项按 pmXxx/PM_ 命名约定反查, 漏掉了不带前缀的符号 (v1.4.65 真实事故:
+// pm-toolbar.js 用了 pm-list.js 的 openPromptDialog 却没 import, 浏览器里点列表按钮
+// 直接 ReferenceError, 而 bundle 测试里所有符号同作用域根本测不出来)。
+// 这里换个思路: 只要这个名字被【任何模块 export 过】, 其它模块用它就必须 import 或本地声明。
+const crossMiss = [];
+for (const f of order) {
+    const raw = fs.readFileSync(path.join(WEB, f), "utf8");
+    const body = raw
+        .split("\n")
+        .filter((l) => !l.startsWith("import "))
+        .join("\n"); // import 行本身含标识符, 不算「使用」
+    const declared = new Set(exportedNames(raw));
+    for (const m of raw.matchAll(/^\s*(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm)) {
+        declared.add(m[1]);
+    }
+    for (const { name } of importedNames(raw)) declared.add(name);
+    // 其它模块导出、且本文件没声明的名字
+    const foreign = new Set();
+    for (const g of order) {
+        if (g === f) continue;
+        for (const n of exportsOf[g]) foreign.add(n);
+    }
+    for (const n of foreign) {
+        if (declared.has(n)) continue;
+        if (new RegExp("(?<![\\w$.])" + escapeRe(n) + "(?![\\w$])").test(body)) {
+            crossMiss.push(`${f} 用了 ${n} 但没 import`);
+        }
+    }
+}
+check(
+    crossMiss.length === 0,
+    crossMiss.length ? crossMiss.join("; ") : "跨模块引用的导出符号都有显式 import"
+);
+
 console.log(failed ? `\n模块体检失败 ${failed} 项` : "\n模块体检全部通过");
 process.exit(failed ? 1 : 0);
