@@ -5,6 +5,7 @@
 
 | 版本 | 日期 | 更新内容 |
 |---|---|---|
+| 1.4.67 | 2026-10-13 | 表结构改用 user_version 有序迁移，不再每次连接逐列探测 |
 | 1.4.66 | 2026-10-13 | 修复：工具条上的「提示词列表」按钮点击无效（v1.4.65 的回归）。原因是 pm-toolbar.js 调用了 pm-list.js 的 openPromptDialog 却忘了 import —— 浏览器里点击直接 ReferenceError，而拼接式 vm 测试里所有符号同作用域、测不出来。配套把模块体检加了一项「跨模块导出符号对账」：任何被其它模块 export 过的名字，使用方必须显式 import 或本地声明，不再依赖 pmXxx 命名约定（已验证：移除 import 后体检立刻报错）。顺带高保真截图换成了 1600×900 版本 |
 | 1.4.65 | 2026-10-12 | 整理上架素材：① 补上插件图标 `assets/icon.png`（512×512），`pyproject.toml` 的 `[tool.comfy] Icon` 从空改为指向它 —— 上架 ComfyUI Registry 必须有图标；② README 配上真实界面截图三张（文本框里的工具条 / 保存对话框 / 工具条设置），全部由无头浏览器从真实运行的 ComfyUI 上截取，不是合成图。列表弹窗那张因截图时本机服务异常暂时撤下，恢复后补。对使用者无功能变化 |
 | 1.4.64 | 2026-10-11 | 修 CI 在 Windows runner 上暴露的三处平台差异：① 插件里「加载成功」那行 print 在 cp1252 控制台/管道下会抛 UnicodeEncodeError，而它与后台数据库巡检在同一个 try 里 —— 一抛出巡检就不会启动（本地中文 Windows 因为 cp936 能编码中文，一直没暴露）。现在给 stdout/stderr 打开错误容错（不改编码，控制台里中文照常显示）。② 测试里两处 open(os.devnull, "w") 没指定编码，同样在英文 Windows 上炸。③「dirs 返回父目录」的断言直接比路径字符串，而 GitHub runner 的临时目录是 8.3 短名（RUNNER~1），realpath 展开后两边对不上 —— 改为统一 realpath+normcase 比较。对使用者无功能变化 |

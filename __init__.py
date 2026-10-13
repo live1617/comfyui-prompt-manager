@@ -13,7 +13,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.4.66"
+__version__ = "1.4.67"
 
 # 英文 Windows 的控制台/管道默认编码是 cp1252, 打印中文会抛 UnicodeEncodeError。
 # 这里只打开「错误容错」(不改编码, 控制台里中文照常显示), 免得一句 print 把后面的

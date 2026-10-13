@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.4.66-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.4.67-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -177,7 +177,7 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 - 想挪到别的位置：设置环境变量 `PM_DB_PATH` 指向目标文件后重启 ComfyUI。
 - **自检**：启动约 8 秒后会对数据库做一次完整性检查（不阻塞启动），通过时控制台打印一行，
   不通过则写进错误日志并提示可从同目录 `.bak` 备份恢复。也可以随时访问
-  `GET /prompt_manager/health` 查看库路径 / 大小 / journal 模式 / 备份份数 / 完整性结果。
+  `GET /prompt_manager/health` 查看库路径 / 大小 / journal 模式 / 备份份数 / 表结构版本 / 完整性结果。
 - **错误日志**（`prompt_manager_error.log`）与数据库放在同一个目录，同样不在插件安装目录里
   ——更新插件是「删旧文件夹解压新版」，放安装目录会被一起删掉。日志超过 1 MB 会自动轮转，
   只保留一份 `.1` 备份。想换位置用环境变量 `PM_LOG_PATH`。

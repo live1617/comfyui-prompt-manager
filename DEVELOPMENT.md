@@ -24,9 +24,26 @@
 | POST | `/prompt_manager/import` | multipart 上传 JSON 导入 |
 | GET  | `/prompt_manager/workflow` | 取图片内嵌的工作流（UI graph 格式，可直接 `app.loadGraphData()`），参数同 `/meta` |
 | GET  | `/prompt_manager/version` | 插件版本号 |
-| GET  | `/prompt_manager/health` | 自检：库路径 / 大小 / journal 模式 / 备份份数 / 完整性检查结果（`quick_check`） |
+| GET  | `/prompt_manager/health` | 自检：库路径 / 大小 / journal 模式 / 备份份数 / 表结构版本 / 完整性检查结果（`quick_check`） |
 
 ## 开发 / 测试
+
+### 数据库结构迁移
+
+`db.py` 用 SQLite 自带的 `PRAGMA user_version` 记表结构版本：每个版本的改动写成一个迁移函数，
+`get_conn()` 按版本号从小到大补跑缺的那些，跑完把版本号写回库里（**改结构和改版本号在同一个
+事务里**，中途失败整体回滚，不会留下半截结构）。历史库的 `user_version` 是 0，被当作 v1 的起点。
+已经是最新的库每进程只做一次校验，之后每次连接不再探测。
+
+要加字段 / 加表：
+
+1. `SCHEMA_VERSION` + 1；
+2. 写一个 `_migrate_to_N(conn)` 并登记进 `_MIGRATIONS`；
+3. 迁移函数必须幂等（建表用 `IF NOT EXISTS`、加列前先看列在不在）—— 全新库、历史库、
+   以及「版本号被别的东西占用但结构不全」的库都会走进来。
+
+别在 `get_conn()` 里直接 `PRAGMA table_info` 逐列探测：那等于每次连接都白做一遍，而且表达不了
+「先加列、再按旧数据回填」这类有先后顺序的改动。
 
 ### 前端文件结构
 
@@ -84,6 +101,7 @@ README 更新日志新增一行 / vm 测试断言），然后自动跑校验与�
 | `tests/pm_log_path_test.py` | 错误日志位置解析、旧日志迁移、1 MB 轮转、写失败静默（28 项） |
 | `tests/pm_db_path_test.py` | 数据库路径解析与旧库迁移（14 项） |
 | `tests/pm_db_wal_test.py` | WAL 模式 / 连接参数 / 完整性巡检 / WAL 下备份与迁移不丢数据（27 项） |
+| `tests/pm_schema_test.py` | 表结构版本：全新库建到位 / 历史库补齐 / 不重复迁移 / 失败整体回滚 / 版本号被占用（32 项） |
 | `tests/pm_db_backup_test.py` | 写前自动备份、节流、份数轮转（18 项） |
 | `tests/pm_content_hash_test.py` | 内容指纹列 / 索引 / 老库补算 / 导入判重（21 项） |
 | `tests/pm_paging_test.py` | 列表筛选分页、查重 SQL 分组、version / health 接口（63 项） |
