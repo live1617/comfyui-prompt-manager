@@ -24,7 +24,11 @@
 | POST | `/prompt_manager/import` | multipart 上传 JSON 导入 |
 | GET  | `/prompt_manager/workflow` | 取图片内嵌的工作流（UI graph 格式，可直接 `app.loadGraphData()`），参数同 `/meta` |
 | GET  | `/prompt_manager/version` | 插件版本号 |
+| GET  | `/prompt_manager/access` | 当前页面是否有写权限：`{local: bool}`，局域网访问时为 false |
 | GET  | `/prompt_manager/health` | 自检：库路径 / 大小 / journal 模式 / 备份份数 / 表结构版本 / 完整性检查结果（`quick_check`） |
+
+> `/prompt_manager/` 下的写接口（`load` 除外，它是以 POST 发的只读接口）、`export`、`dirs`
+> 以及带自定义路径的图库读，默认只接受本机请求，见下方「局域网访问控制」。
 
 ## 开发 / 测试
 
@@ -44,6 +48,23 @@
 
 别在 `get_conn()` 里直接 `PRAGMA table_info` 逐列探测：那等于每次连接都白做一遍，而且表达不了
 「先加列、再按旧数据回填」这类有先后顺序的改动。
+
+### 局域网访问控制
+
+`security_guard.py` 给 ComfyUI 的 aiohttp app 套一层中间件，只作用于 `/prompt_manager/`：
+
+- **非 GET 默认只允许本机**（`return path not in READ_POSTS`），新增写接口不用改这里，天然受保护；
+- 以 POST 发的只读接口要显式登记进 `READ_POSTS`（目前只有 `load`）；
+- 敏感 GET 登记在 `LOCAL_GETS`（`export` 整包导出、`dirs` 目录浏览）；
+- `gallery` / `thumb` / `meta` / `workflow` 只要带了 `path` / `paths` 参数也收紧到本机，
+  否则远程能借「自定义目录」读到任意本地文件。
+
+「本机」= 回环地址 + 本机所有网卡地址（`gethostbyname_ex` / `getaddrinfo` 解析，60 秒缓存）。
+**刻意不校验 Host 和代理头**：用局域网 IP 打开自己的 ComfyUI 时不会被锁在门外。代价是放弃了
+DNS rebinding 那层防护 —— 对本地小工具是可接受的取舍。
+
+`tests/pm_security_test.py` 会扫描 `__init__.py` 里所有 `@routes.post/get`，确认每个写接口都要求
+本机、只读白名单里没混进写接口。
 
 ### 前端文件结构
 
@@ -95,13 +116,14 @@ README 更新日志新增一行 / vm 测试断言），然后自动跑校验与�
 |---|---|
 | `tests/pm_modules_check.js` | 前端模块体检：import/export 对账、循环依赖、孤儿文件、非入口模块的顶层副作用 |
 | `tests/pm_bundle.js` | 测试用的拼接器：把 web 下多个 ES 模块按依赖顺序拼成普通脚本，供 node vm 跑 |
-| `tests/pm_vm_test.js` | 前端主逻辑（295 项断言，vm 桩环境，跑的是拼接后的 bundle） |
+| `tests/pm_vm_test.js` | 前端主逻辑（298 项断言，vm 桩环境，跑的是拼接后的 bundle） |
 | `tests/pm_mini_blank_test.js` | 顶栏浮层 / 设置菜单的空白处关闭行为 |
 | `tests/pm_backend_trash_test.py` | 后端路由、图库扫描、移入回收站、工作流接口（45 项） |
 | `tests/pm_log_path_test.py` | 错误日志位置解析、旧日志迁移、1 MB 轮转、写失败静默（28 项） |
 | `tests/pm_db_path_test.py` | 数据库路径解析与旧库迁移（14 项） |
 | `tests/pm_db_wal_test.py` | WAL 模式 / 连接参数 / 完整性巡检 / WAL 下备份与迁移不丢数据（27 项） |
 | `tests/pm_schema_test.py` | 表结构版本：全新库建到位 / 历史库补齐 / 不重复迁移 / 失败整体回滚 / 版本号被占用（32 项） |
+| `tests/pm_security_test.py` | 局域网写保护：路由清单全覆盖、本机判定、自定义路径收紧、中间件 403、挂载幂等（66 项） |
 | `tests/pm_db_backup_test.py` | 写前自动备份、节流、份数轮转（18 项） |
 | `tests/pm_content_hash_test.py` | 内容指纹列 / 索引 / 老库补算 / 导入判重（21 项） |
 | `tests/pm_paging_test.py` | 列表筛选分页、查重 SQL 分组、version / health 接口（63 项） |

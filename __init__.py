@@ -13,7 +13,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.4.67"
+__version__ = "1.4.68"
 
 # 英文 Windows 的控制台/管道默认编码是 cp1252, 打印中文会抛 UnicodeEncodeError。
 # 这里只打开「错误容错」(不改编码, 控制台里中文照常显示), 免得一句 print 把后面的
@@ -45,6 +45,11 @@ try:
     from . import log as pm_log
 except ImportError:
     pm_log = _load_local("prompt_manager_log", "log.py")
+
+try:
+    from . import security_guard
+except ImportError:
+    security_guard = _load_local("prompt_manager_security_guard", "security_guard.py")
 
 NODE_CLASS_MAPPINGS = {}
 
@@ -81,6 +86,17 @@ try:
     from server import PromptServer
 
     routes = PromptServer.instance.routes
+
+    # 局域网访问时只允许「看」: 写操作与敏感读只接受本机请求。
+    # 用 --listen 启动后, 同网段的其他设备也能打开页面, 否则它们能调用
+    # trash / delete / import 把库和图库清掉。
+    try:
+        _pm_app = getattr(PromptServer.instance, "app", None)
+        if _pm_app is not None and not security_guard.install(_pm_app):
+            # 挂不上就等于没保护, 别让它静默失败
+            _log_error("安全中间件未能挂载 (app.middlewares 不可写), 局域网写保护不生效")
+    except Exception:
+        _log_error("安全中间件挂载失败:\n" + traceback.format_exc())
 
     @routes.post("/prompt_manager/save")
     async def save_handler(request):
@@ -304,6 +320,13 @@ try:
     @routes.get("/prompt_manager/version")
     async def version_handler(request):
         return web.json_response({"ok": True, "version": __version__})
+
+    @routes.get("/prompt_manager/access")
+    async def access_handler(request):
+        """当前页面是否有写权限: 局域网访问时 local=False, 前端可据此显示只读提示"""
+        return web.json_response(
+            {"ok": True, "local": bool(security_guard.is_local(request))}
+        )
 
     @routes.get("/prompt_manager/health")
     async def health_handler(request):

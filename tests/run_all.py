@@ -39,6 +39,7 @@ PY_TESTS = [
     ("数据库路径解析", "pm_db_path_test.py", None),
     ("数据库 WAL / 完整性巡检", "pm_db_wal_test.py", None),
     ("schema 版本与有序迁移", "pm_schema_test.py", None),
+    ("局域网写保护", "pm_security_test.py", None),
     ("数据库自动备份", "pm_db_backup_test.py", None),
     ("内容指纹 content_hash", "pm_content_hash_test.py", None),
     ("列表分页 / 查重分组", "pm_paging_test.py", None),

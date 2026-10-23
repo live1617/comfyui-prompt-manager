@@ -353,7 +353,7 @@ const testCode = `
     };
 
     // 1. 版本号
-    assert(PM_VERSION === "1.4.67", "版本号为 1.4.61");
+    assert(PM_VERSION === "1.4.68", "版本号为 1.4.61");
 
     // 2. 新函数存在
     assert(typeof toggleSettingsMenu === "function", "toggleSettingsMenu 存在");

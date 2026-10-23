@@ -127,7 +127,7 @@ def run(cmd, label):
 
 def pack(ver, archive):
     files = []
-    for rel in (".gitignore", "LICENSE", "README.md", "CHANGELOG.md", "DEVELOPMENT.md", "pyproject.toml", "__init__.py", "db.py", "log.py"):
+    for rel in (".gitignore", "LICENSE", "README.md", "CHANGELOG.md", "DEVELOPMENT.md", "pyproject.toml", "__init__.py", "db.py", "log.py", "security_guard.py"):
         p = os.path.join(ROOT, rel)
         if os.path.exists(p):
             files.append(p)

@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.4.67-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.4.68-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -133,6 +133,18 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
 - 想关掉：设置环境变量 **`PM_BACKUP=0`** 后重启 ComfyUI
 - **误删 / 覆盖错了怎么找回**：挑一份 `.bak` 改名成 `prompt_manager.db` 覆盖回去再重启，
   那一刻之前的内容就回来了
+
+## 局域网访问
+
+用 `--listen` 启动 ComfyUI 时，同一网络里的其他设备也能打开这个页面。插件对此做了区分：
+
+- **其他设备只能看**：浏览提示词列表、搜索、读内容、看 output 里的图都正常；
+- **修改只允许运行 ComfyUI 的那台电脑**：保存、改名、删除、移动分类、分类增删改序、去重、导入、
+  把图移入回收站，从别的设备调用会返回 `403 local_only`；
+- 整包导出、本机目录浏览、带自定义路径的图库读取也只允许本机 —— 它们会暴露这台机器的目录结构。
+
+判定只认来源 IP（回环地址 + 本机网卡地址）。所以在本机用 `localhost` 或局域网 IP 打开都正常，
+不会把自己锁在门外。
 
 ## 外观微调
 
