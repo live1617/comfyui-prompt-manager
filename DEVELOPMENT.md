@@ -116,7 +116,7 @@ README 更新日志新增一行 / vm 测试断言），然后自动跑校验与�
 |---|---|
 | `tests/pm_modules_check.js` | 前端模块体检：import/export 对账、循环依赖、孤儿文件、非入口模块的顶层副作用 |
 | `tests/pm_bundle.js` | 测试用的拼接器：把 web 下多个 ES 模块按依赖顺序拼成普通脚本，供 node vm 跑 |
-| `tests/pm_vm_test.js` | 前端主逻辑（298 项断言，vm 桩环境，跑的是拼接后的 bundle） |
+| `tests/pm_vm_test.js` | 前端主逻辑（305 项断言，vm 桩环境，跑的是拼接后的 bundle；含局域网只读提示的 6 项） |
 | `tests/pm_mini_blank_test.js` | 顶栏浮层 / 设置菜单的空白处关闭行为 |
 | `tests/pm_backend_trash_test.py` | 后端路由、图库扫描、移入回收站、工作流接口（45 项） |
 | `tests/pm_log_path_test.py` | 错误日志位置解析、旧日志迁移、1 MB 轮转、写失败静默（28 项） |

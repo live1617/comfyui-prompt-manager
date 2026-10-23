@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 comfyui-prompt-manager contributors
 import { app } from "../../scripts/app.js";
-import { applyPmSettings } from "./pm-core.js";
+import { applyPmSettings, checkWriteAccess } from "./pm-core.js";
 import { S } from "./pm-state.js";
 import { closeSaveDialog } from "./pm-save.js";
 import { injectToolbars, sweepTextareas } from "./pm-toolbar.js";
@@ -59,5 +59,8 @@ app.registerExtension({
 });
 
 applyPmSettings();
+
+// 局域网访问时提示「只读模式」(不阻塞初始化, 失败按可写处理)
+checkWriteAccess();
 
 setInterval(sweepTextareas, 1500);

@@ -353,7 +353,7 @@ const testCode = `
     };
 
     // 1. 版本号
-    assert(PM_VERSION === "1.4.68", "版本号为 1.4.61");
+    assert(PM_VERSION === "1.4.69", "版本号为 1.4.61");
 
     // 2. 新函数存在
     assert(typeof toggleSettingsMenu === "function", "toggleSettingsMenu 存在");
@@ -1477,6 +1477,52 @@ const testCode = `
 
     // 设置对话框里显示的许可证必须跟项目一致 (之前写死成 MIT 了)
     assert(PM_LICENSE === "GPL-3.0-or-later", "许可证常量是 GPL-3.0-or-later, 不是 MIT");
+
+    // 局域网只读: /access 返回 local:false 时置只读 + 挂提示条
+    const origFetch = api.fetchApi;
+    S.readOnly = false;
+    api.fetchApi = async (url) => {
+        if (url === "/prompt_manager/access") {
+            return { ok: true, status: 200, json: async () => ({ ok: true, local: false }) };
+        }
+        return { ok: true, status: 200, json: async () => ({}) };
+    };
+    await checkWriteAccess();
+    assert(S.readOnly === true, "远程访问 -> S.readOnly = true");
+    const chip = document.getElementById("pm-readonly-chip");
+    assert(!!chip && chip.textContent.indexOf("只读") >= 0, "远程访问 -> 显示只读提示条");
+    assert(chip.style.cssText.indexOf("pointer-events:none") >= 0, "只读提示条不挡点击");
+
+    await checkWriteAccess();
+    const chips = document.body.children.filter((c) => c.id === "pm-readonly-chip");
+    assert(chips.length === 1, "重复检查不会挂第二条提示");
+
+    chip.remove();
+    S.readOnly = false;
+    api.fetchApi = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, local: true }) });
+    await checkWriteAccess();
+    assert(S.readOnly === false && !document.getElementById("pm-readonly-chip"), "本机访问 -> 不显示只读提示");
+
+    // 老版本没有 /access (404): 按可写处理, 不抛错
+    api.fetchApi = async () => ({ ok: false, status: 404, json: async () => ({}) });
+    await checkWriteAccess();
+    assert(S.readOnly === false && !document.getElementById("pm-readonly-chip"), "接口 404 -> 按可写处理");
+
+    // 403 优先显示 message (人话), 不是 error 里的错误码
+    api.fetchApi = async () => ({
+        ok: false,
+        status: 403,
+        json: async () => ({ error: "local_only", message: "只能在运行 ComfyUI 的电脑上修改" }),
+    });
+    let pm403 = "";
+    try {
+        await apiPost("/prompt_manager/save", { name: "x", text: "y" });
+    } catch (e) {
+        pm403 = e.message;
+    }
+    assert(pm403 === "只能在运行 ComfyUI 的电脑上修改", "403 优先显示 message");
+
+    api.fetchApi = origFetch;
 
     console.log("✅ 全部 " + results.length + " 项断言通过:");
     results.forEach((m, i) => console.log("   " + (i + 1) + ". " + m));

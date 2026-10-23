@@ -4,10 +4,11 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { S } from "./pm-state.js";
 
 let _pmItemsCache = null;
 let _pmItemsCacheFull = false;
-export const PM_VERSION = "1.4.68";
+export const PM_VERSION = "1.4.69";
 
 // 界面上显示的许可证 —— 必须与 pyproject.toml 的 license 一致
 // (v1.4.60 之前设置对话框里写死了 "MIT License", 与实际的 GPL-3.0 不符)
@@ -55,10 +56,27 @@ export function toast(msg, ok = true) {
     }, 2600);
 }
 
+// 只读模式提示条: 局域网访问时固定在页面顶部, 不挡点击 (pointer-events:none)
+export function showReadOnlyChip(text) {
+    if (typeof document === "undefined" || !document.body) return;
+    if (document.getElementById("pm-readonly-chip")) return;
+    const el = document.createElement("div");
+    el.id = "pm-readonly-chip";
+    el.textContent = `🔒 ${text}`;
+    el.title = "当前页面以只读模式运行: 可以浏览, 不能修改";
+    el.style.cssText =
+        "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:100400;" +
+        "padding:6px 12px;border-radius:999px;font-size:12px;line-height:1.4;" +
+        "color:#fff;background:rgba(190,120,30,.95);" +
+        "box-shadow:0 2px 10px rgba(0,0,0,.25);pointer-events:none;user-select:none;";
+    document.body.appendChild(el);
+}
+
 export async function apiGet(url) {
     const res = await api.fetchApi(url);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
+    // message 是给人看的一句话 (例如局域网写保护的双语提示), error 可能只是错误码
+    if (!res.ok) throw new Error(data.message || data.error || `请求失败 (${res.status})`);
     return data;
 }
 
@@ -69,8 +87,22 @@ export async function apiPost(url, body) {
         body: JSON.stringify(body || {}),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`);
+    if (!res.ok) throw new Error(data.message || data.error || `请求失败 (${res.status})`);
     return data;
+}
+
+// 问后端「这个页面能不能写」: 局域网访问时置只读并显示提示条。
+// 失败一律按可写处理 (老版本没有这个接口, 不能因此误报只读)。
+export async function checkWriteAccess() {
+    try {
+        const r = await apiGet("/prompt_manager/access");
+        if (r && r.local === false) {
+            S.readOnly = true;
+            showReadOnlyChip("只读模式：修改操作请在运行 ComfyUI 的电脑上进行");
+        }
+    } catch (_) {
+        // 404 / 网络错误: 什么都不做
+    }
 }
 
 export function findWidget(target) {
