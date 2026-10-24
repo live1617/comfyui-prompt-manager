@@ -198,6 +198,12 @@ const app = {
 
 const api = { _calls: [] };
 function routeResponse(url) {
+    if (url === "/prompt_manager/index") {
+        return { ok: true, status: 200, json: async () => ({ items: [
+            { name: "prompt_0001", category: "默认" },
+            { name: "zk-krea2人像写真提示词", category: "1.元指令" },
+        ] }) };
+    }
     if (url.indexOf("/prompt_manager/all") === 0) {  // 带分页/搜索参数
         return { ok: true, status: 200, json: async () => ({
             items: [
@@ -353,7 +359,7 @@ const testCode = `
     };
 
     // 1. 版本号
-    assert(PM_VERSION === "1.4.69", "版本号为 1.4.61");
+    assert(PM_VERSION === "1.4.70", "版本号为 1.4.61");
 
     // 2. 新函数存在
     assert(typeof toggleSettingsMenu === "function", "toggleSettingsMenu 存在");
@@ -531,12 +537,17 @@ const testCode = `
     closePromptDialog();
     assert(!S.dialog, "closePromptDialog 正常关闭");
 
-    // 9b. 面板未打开时导入 → 静默刷新缓存一次, 不报错
+    // 9b. 面板未打开时导入 → 用轻量索引静默刷新缓存, 不再全量拉正文
+    const indexBefore = api._calls.filter((c) => c === "/prompt_manager/index").length;
     const allBefore2 = api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length;
     await pmRefreshAfterImport();
     assert(
-        api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length === allBefore2 + 1,
-        "面板未开时静默刷新缓存一次"
+        api._calls.filter((c) => c === "/prompt_manager/index").length === indexBefore + 1,
+        "面板未开时走轻量索引刷新缓存"
+    );
+    assert(
+        api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length === allBefore2,
+        "不再全量拉正文"
     );
 
     // 9c. 分类栏显示所有服务器分类 (包括没有提示词的空分类)
@@ -620,11 +631,16 @@ const testCode = `
     _pmItemsCacheFull = false;
     pmItemsCacheMerge([{ name: "only-one", category: "默认" }]);
     assert(_pmItemsCache.length === 1, "merge 只补充缓存, 不清空");
+    const indexBefore4 = api._calls.filter((c) => c === "/prompt_manager/index").length;
     const allBefore4 = api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length;
     await pmKnownItems();
     assert(
-        api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length === allBefore4 + 1,
-        "缓存不完整时 pmKnownItems 会重新拉全量 (不拿分页数据判重名)"
+        api._calls.filter((c) => c === "/prompt_manager/index").length === indexBefore4 + 1,
+        "缓存不完整时 pmKnownItems 会重新拉全量索引 (不拿分页数据判重名)"
+    );
+    assert(
+        api._calls.filter((c) => c.indexOf("/prompt_manager/all") === 0).length === allBefore4,
+        "名称缓存不再拉正文"
     );
 
     // 9h. 工具条「提示词列表」按钮必须调 openPromptDialog (v1.4.66 回归的回归测试:

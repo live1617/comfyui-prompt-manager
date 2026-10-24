@@ -267,7 +267,15 @@ export async function pmRefreshAfterImport() {
             return;
         }
         // 没开面板 -> 只静默刷新工具栏用的缓存
-        const data = await apiGet("/prompt_manager/all");
+        // 优先用轻量索引接口, 老版本没有就退回 /all
+        let data = null;
+        try {
+            const idx = await apiGet("/prompt_manager/index");
+            if (Array.isArray(idx.items)) data = idx;
+        } catch (e) {
+            // 旧版本没有 /index
+        }
+        if (!data) data = await apiGet("/prompt_manager/all");
         pmItemsCacheReset(data.items || []);
     } catch (e) {
 

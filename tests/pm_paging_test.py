@@ -274,6 +274,78 @@ if health:
     check(int(info.get("size", 0)) > 0, "带文件大小 (%s 字节)" % info.get("size"))
     check("backups" in info, "带备份份数")
 
+print("\n[13] v2 索引 / 分类顺序冗余 (列表不再全表排序)")
+check(db.SCHEMA_VERSION == 2, "SCHEMA_VERSION = 2")
+conn = db.get_conn()
+check("category_order" in db._table_columns(conn, "prompts"), "prompts 有 category_order 列")
+idx = {r["name"] for r in conn.execute("PRAGMA index_list(prompts)")}
+check(
+    {"idx_prompts_order", "idx_prompts_cat_order"} <= idx,
+    "两个列表索引都在 (%s)" % sorted(idx),
+)
+conn.close()
+
+# 造够数据, 让查询计划器愿意走索引 (小表可能直接扫)
+for i in range(300):
+    db.save_prompt("perf%03d" % i, "perf %d" % i, category="A" if i % 2 else "B")
+
+conn = db.get_conn()
+plan_all = " ".join(
+    str(tuple(r))
+    for r in conn.execute(
+        "EXPLAIN QUERY PLAN SELECT name FROM prompts "
+        "ORDER BY category_order, category, name LIMIT 300"
+    )
+)
+plan_cat = " ".join(
+    str(tuple(r))
+    for r in conn.execute(
+        "EXPLAIN QUERY PLAN SELECT name FROM prompts WHERE category='A' "
+        "ORDER BY category_order, category, name LIMIT 300"
+    )
+)
+conn.close()
+check("idx_prompts_order" in plan_all, "全部分类走 idx_prompts_order (%s)" % plan_all)
+check("TEMP B-TREE" not in plan_all, "全部分类不再临时排序")
+check("idx_prompts_cat_order" in plan_cat, "单分类走 idx_prompts_cat_order (%s)" % plan_cat)
+check("TEMP B-TREE" not in plan_cat, "单分类不再临时排序")
+
+idx_items = db.list_index()
+check(len(idx_items) == db.count_items(), "list_index 与 count_items 条数一致")
+check(
+    all(set(x) == {"name", "category"} for x in idx_items),
+    "list_index 只返回 name / category (不含正文)",
+)
+
+# 调整分类顺序 -> 列表分组顺序跟着变, 冗余列也同步
+db.set_category_order(["B", "A"])
+seq = []
+for it in db.list_items():
+    if not seq or seq[-1] != it["category"]:
+        seq.append(it["category"])
+check(seq[:2] == ["B", "A"], "列表分组顺序跟随 sort_order (%s)" % seq[:2])
+conn = db.get_conn()
+row = conn.execute("SELECT category_order FROM prompts WHERE category='A' LIMIT 1").fetchone()
+check(row["category_order"] == 1, "set_category_order 同步 prompts.category_order")
+conn.close()
+
+# 保存 / 移动都要维护冗余列
+db.save_prompt("order probe", "probe", category="A")
+conn = db.get_conn()
+row = conn.execute("SELECT category_order FROM prompts WHERE name='order probe'").fetchone()
+check(row["category_order"] == 1, "save_prompt 写入 category_order")
+conn.close()
+db.move_prompt("order probe", "B")
+conn = db.get_conn()
+row = conn.execute("SELECT category_order FROM prompts WHERE name='order probe'").fetchone()
+check(row["category_order"] == 0, "move_prompt 更新 category_order")
+conn.close()
+
+# 写操作后缓存失效: 新分类要能自动登记, 否则导入的新分类永远排最后
+db.save_prompt("new cat probe", "new cat", category="新分类C")
+check(any(c["name"] == "新分类C" for c in db.list_categories()), "新分类自动登记")
+check(len(db.list_items(category="新分类C")) == 1, "新分类下的条目可见")
+
 print()
 print("结果: %d 项通过, %d 项失败" % (PASSED, FAILED))
 sys.exit(1 if FAILED else 0)

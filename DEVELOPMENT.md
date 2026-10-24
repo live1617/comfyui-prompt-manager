@@ -11,6 +11,7 @@
 | POST | `/prompt_manager/load` | `{name}` 读取内容 |
 | POST | `/prompt_manager/delete` | `{name}` 删除 |
 | GET  | `/prompt_manager/list` | 全部名称 |
+| GET  | `/prompt_manager/index` | 全部「名称 + 分类」（不含正文），给前端名称补全 / 分类缓存用 |
 | GET  | `/prompt_manager/categories` | 分类列表（含数量，按排序返回） |
 | POST | `/prompt_manager/categories` | `{name}` 新建分类 |
 | POST | `/prompt_manager/categories/rename` | `{old_name, new_name}` 分类改名（提示词自动跟随） |
@@ -48,6 +49,18 @@
 
 别在 `get_conn()` 里直接 `PRAGMA table_info` 逐列探测：那等于每次连接都白做一遍，而且表达不了
 「先加列、再按旧数据回填」这类有先后顺序的改动。
+
+**v2（列表性能）**：`prompts.category_order` 是 `pm_categories.sort_order` 的冗余副本。
+列表要按「分类自定义顺序 → 分类名 → 名称」排列；原先 `ORDER BY` 里挂相关子查询去取
+`sort_order`，索引全废，3.6 万条每次切换分类要全表排一遍（36~120ms）。改成冗余列 + 两个
+复合索引后是 1ms 级：
+
+- `idx_prompts_order (category_order, category, name)` —— 全部分类
+- `idx_prompts_cat_order (category, category_order, name)` —— 单分类 + 计数
+
+**新增写路径必须维护 `category_order`**：`save_prompt`、`move_prompt`、`import_data`、
+`delete_category`（保留模式）、`set_category_order` 都已经带上了。漏掉的话条目会排在
+999999（最后）。`_ensure_category_rows` 在登记新分类时会补一次，算兜底。
 
 ### 局域网访问控制
 
@@ -126,7 +139,7 @@ README 更新日志新增一行 / vm 测试断言），然后自动跑校验与�
 | `tests/pm_security_test.py` | 局域网写保护：路由清单全覆盖、本机判定、自定义路径收紧、中间件 403、挂载幂等（66 项） |
 | `tests/pm_db_backup_test.py` | 写前自动备份、节流、份数轮转（18 项） |
 | `tests/pm_content_hash_test.py` | 内容指纹列 / 索引 / 老库补算 / 导入判重（21 项） |
-| `tests/pm_paging_test.py` | 列表筛选分页、查重 SQL 分组、version / health 接口（63 项） |
+| `tests/pm_paging_test.py` | 列表筛选分页、查重 SQL 分组、version / health 接口、v2 索引与分类顺序（78 项） |
 | `tests/pm_meta_workflow_test.py` | 图片元数据 / 提示词提取回归（需 pillow） |
 | `tests/check_version.py` | 版本号六处一致性 |
 | `tests/bump_version.py` | 一键发版：改六处版本号 → 校验 → 跑测试 → 打包（失败自动回滚） |

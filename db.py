@@ -206,9 +206,14 @@ def _prune_backups() -> None:
 @contextlib.contextmanager
 def _write():
     """所有写操作的统一入口: 进入锁之后、真正动手之前, 先给库留一份快照"""
+    global _categories_ready_path
     with _lock:
         snapshot_db()
-        yield
+        try:
+            yield
+        finally:
+            # 写操作可能新增/改名分类, 下次读重新对一遍 pm_categories
+            _categories_ready_path = None
 
 
 # ---- 完整性巡检 ----
@@ -278,7 +283,7 @@ def db_health() -> dict:
 #   但**一个库只跑这一次**, 之后每次连接只读一下版本号就完事。
 # 以后要改结构: SCHEMA_VERSION +1, 再追加一个 _migrate_to_N(conn) 并登记进
 # _MIGRATIONS —— 老库会按顺序补齐, 新库一次建到位。
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _migrate_to_1(conn) -> None:
@@ -340,7 +345,41 @@ def _migrate_to_1(conn) -> None:
 
 
 # 版本号 -> 迁移函数; 执行时按版本号从小到大, 每个最多跑一次
-_MIGRATIONS = [(1, _migrate_to_1)]
+def _migrate_to_2(conn) -> None:
+    """v1 -> v2: 把分类排序冗余进 prompts, 列表查询才能走索引。
+
+    列表页要按「分类自定义顺序 + 名称」排列。原先 ORDER BY 里带一个相关子查询
+    去 pm_categories 取 sort_order, 索引全废, 每次切换分类都要把整表排一遍
+    (36k 条实测 36~120ms)。把 sort_order 复制成 prompts.category_order 之后,
+    复合索引可以直接按顺序取前 N 条 (实测 1ms)。
+    """
+    cols = _table_columns(conn, "prompts")
+    if "category_order" not in cols:
+        conn.execute(
+            "ALTER TABLE prompts ADD COLUMN category_order INTEGER NOT NULL DEFAULT 0"
+        )
+    conn.execute(
+        """
+        UPDATE prompts
+        SET category_order = COALESCE(
+            (SELECT c.sort_order FROM pm_categories c WHERE c.name = prompts.category),
+            999999
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prompts_order "
+        "ON prompts(category_order, category, name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_prompts_cat_order "
+        "ON prompts(category, category_order, name)"
+    )
+    # 让查询计划器知道新索引的选择性; 一次性, 36k 行几十毫秒
+    conn.execute("ANALYZE")
+
+
+_MIGRATIONS = [(1, _migrate_to_1), (2, _migrate_to_2)]
 
 _schema_lock = threading.Lock()
 _schema_ready_path = None  # 本进程已确认过的库路径 (换库/测试换路径会自动重查)
@@ -370,7 +409,7 @@ def _needs_migration(conn) -> bool:
     cat_cols = _table_columns(conn, "pm_categories")
     if not cols or not cat_cols:
         return True
-    return not {"category", "content_hash"} <= cols or "sort_order" not in cat_cols
+    return not {"category", "content_hash", "category_order"} <= cols or "sort_order" not in cat_cols
 
 
 def _run_migrations(conn) -> None:
@@ -448,21 +487,33 @@ def normalize_category(category) -> str:
     c = (category or "").strip() if isinstance(category, str) else ""
     return c or DEFAULT_CATEGORY
 
+
+def _category_order(conn, category) -> int:
+    """分类的排序值; 分类还没登记时排到最后"""
+    cat = normalize_category(category)
+    row = conn.execute(
+        "SELECT COALESCE(sort_order, 999999) FROM pm_categories WHERE name = ?", (cat,)
+    ).fetchone()
+    return int(row[0]) if row else 999999
+
 def save_prompt(name: str, text: str, category: str = None) -> None:
     cat = normalize_category(category)
     with _write():
         conn = get_conn()
         try:
+            order = _category_order(conn, cat)
             conn.execute(
                 """
-                INSERT INTO prompts(name, text, category, content_hash) VALUES(?, ?, ?, ?)
+                INSERT INTO prompts(name, text, category, category_order, content_hash)
+                VALUES(?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     text = excluded.text,
                     category = excluded.category,
+                    category_order = excluded.category_order,
                     content_hash = excluded.content_hash,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (name, text, cat, _content_hash(text)),
+                (name, text, cat, order, _content_hash(text)),
             )
             conn.commit()
         finally:
@@ -646,9 +697,11 @@ def move_prompt(name: str, category: str) -> bool:
     with _write():
         conn = get_conn()
         try:
+            order = _category_order(conn, cat)
             cur = conn.execute(
-                "UPDATE prompts SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
-                (cat, name),
+                "UPDATE prompts SET category = ?, category_order = ?, "
+                "updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                (cat, order, name),
             )
             conn.commit()
             return cur.rowcount > 0
@@ -695,9 +748,23 @@ def _next_order(conn) -> int:
     ).fetchone()
     return (row["m"] if row else 0) + 1
 
+_categories_ready_path = None
+
+
 def _ensure_category_rows(conn) -> None:
+    """把 prompts 里出现、但 pm_categories 还没有的分类补进去。
+
+    每个进程 / 每次写操作之后只做一次: 原先每次读列表都跑一遍
+    `SELECT DISTINCT category` + 17 次冲突插入, 36k 条时代价并不低。
+    补新分类时顺手刷新该分类下 prompts 的 category_order, 导入进来的新分类
+    才不会永远排在 999999。
+    """
+    global _categories_ready_path
+    if _categories_ready_path == DB_PATH:
+        return
     nxt = _next_order(conn)
     rows = conn.execute("SELECT DISTINCT category FROM prompts").fetchall()
+    changed = False
     for r in rows:
         cat = normalize_category(r["category"])
         cur = conn.execute(
@@ -705,7 +772,15 @@ def _ensure_category_rows(conn) -> None:
             (cat, nxt),
         )
         if cur.rowcount:
+            conn.execute(
+                "UPDATE prompts SET category_order = ? WHERE category = ?", (nxt, cat)
+            )
             nxt += 1
+            changed = True
+    if changed:
+        # 分类行要真正落库; 读路径本来就没有外层事务, 这里提交是安全的
+        conn.commit()
+    _categories_ready_path = DB_PATH
 
 def rename_category(old: str, new: str) -> bool:
     o = normalize_category(old)
@@ -741,15 +816,17 @@ def delete_category(name: str, delete_prompts: bool = False) -> dict:
                 cur = conn.execute("DELETE FROM prompts WHERE category = ?", (cat,))
                 result["deleted"] = cur.rowcount
             else:
-                cur = conn.execute(
-                    "UPDATE prompts SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE category = ?",
-                    (DEFAULT_CATEGORY, cat),
-                )
-                result["moved"] = cur.rowcount
                 conn.execute(
                     "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
                     (DEFAULT_CATEGORY, _next_order(conn)),
                 )
+                dorder = _category_order(conn, DEFAULT_CATEGORY)
+                cur = conn.execute(
+                    "UPDATE prompts SET category = ?, category_order = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE category = ?",
+                    (DEFAULT_CATEGORY, dorder, cat),
+                )
+                result["moved"] = cur.rowcount
             conn.execute("DELETE FROM pm_categories WHERE name = ?", (cat,))
             conn.commit()
             return result
@@ -771,6 +848,10 @@ def set_category_order(names: list) -> None:
                         "INSERT OR IGNORE INTO pm_categories(name, sort_order) VALUES(?, ?)",
                         (cat, i),
                     )
+                # 分类顺序变了, 这一类的提示词跟着换排序值 (列表才能继续走索引)
+                conn.execute(
+                    "UPDATE prompts SET category_order = ? WHERE category = ?", (i, cat)
+                )
             conn.commit()
         finally:
             conn.close()
@@ -824,15 +905,29 @@ def list_items(
                        updated_at
                 FROM prompts
                 WHERE 1 = 1{}
-                ORDER BY (
-                           SELECT COALESCE(c.sort_order, 999999)
-                           FROM pm_categories c
-                           WHERE c.name = prompts.category
-                       ),
-                       category,
-                       name{}
+                ORDER BY category_order, category, name{}
                 """.format(where, page_sql),
                 params + page_args,
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+
+def list_index() -> list:
+    """全部提示词的「名称 + 分类」, 不含正文。
+
+    前端做名称补全 / 分类缓存时只需要这两个字段。走 /all 会把 36k 条的正文
+    读出来 (100MB), 而这里走 (category_order, category, name) 覆盖索引,
+    实测 20ms 左右。
+    """
+    with _lock:
+        conn = get_conn()
+        try:
+            _ensure_category_rows(conn)
+            rows = conn.execute(
+                "SELECT name, category FROM prompts "
+                "ORDER BY category_order, category, name"
             ).fetchall()
             return [dict(r) for r in rows]
         finally:
@@ -937,6 +1032,11 @@ def import_data(
                 )
 
             taken = set(stored.keys())
+            # 一次取出分类排序, 避免每行都查一次 pm_categories
+            order_map = {
+                r["name"]: int(r["sort_order"] or 0)
+                for r in conn.execute("SELECT name, sort_order FROM pm_categories")
+            }
 
             for item in prompts:
                 name = (item.get("name") or "").strip()
@@ -973,19 +1073,23 @@ def import_data(
                     skipped_content += 1
                     continue
 
+                cat = normalize_category(item.get("category"))
                 conn.execute(
                     """
-                    INSERT INTO prompts(name, text, category, content_hash) VALUES(?, ?, ?, ?)
+                    INSERT INTO prompts(name, text, category, category_order, content_hash)
+                    VALUES(?, ?, ?, ?, ?)
                     ON CONFLICT(name) DO UPDATE SET
                         text = excluded.text,
                         category = excluded.category,
+                        category_order = excluded.category_order,
                         content_hash = excluded.content_hash,
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         name,
                         text,
-                        normalize_category(item.get("category")),
+                        cat,
+                        order_map.get(cat, 999999),
                         _content_hash(text),
                     ),
                 )

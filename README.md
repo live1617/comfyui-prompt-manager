@@ -1,6 +1,6 @@
 # ComfyUI Prompt Manager (提示词管理器)
 
-<p><img src="https://img.shields.io/badge/version-1.4.69-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
+<p><img src="https://img.shields.io/badge/version-1.4.70-blue" alt="version"> <img src="https://img.shields.io/badge/license-GPLv3-green" alt="license"> <img src="https://img.shields.io/badge/ComfyUI-custom__node-orange" alt="ComfyUI custom node"></p>
 
 一个提示词保存插件，**无需添加任何节点**。装好插件后，画布上**所有带多行文本框的节点**（CLIP Text Encode、各种 Positive/Negative 提示词节点等）的文本框内部左下角都会出现一个半透明小图标工具条，可以把提示词保存到 SQLite 数据库、从数据库加载回来。
 
@@ -119,6 +119,9 @@ ComfyUI/custom_nodes/comfyui-prompt-manager/
     `[PromptManager] 加载成功 v1.4.48 (无需添加节点) | 数据库: D:\...\user\comfyui-prompt-manager\prompt_manager.db`
 - 数据表：`prompts(name 唯一, text, category, created_at, updated_at)`
 - 同名保存会覆盖旧内容（并更新它所属的分类）
+- **大库性能**：列表按「分类顺序 + 名称」走复合索引，3.6 万条切换分类通常是毫秒级；
+  名称补全走轻量索引接口（只取名称和分类，不读正文）。从旧版本升级时会对旧库做一次
+  一次性迁移（建索引 + 回填分类顺序），3 万条大约几秒，之后不再重复。
 
 ### 自动备份
 

@@ -13,7 +13,7 @@ from aiohttp import web
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-__version__ = "1.4.69"
+__version__ = "1.4.70"
 
 # 英文 Windows 的控制台/管道默认编码是 cp1252, 打印中文会抛 UnicodeEncodeError。
 # 这里只打开「错误容错」(不改编码, 控制台里中文照常显示), 免得一句 print 把后面的
@@ -316,6 +316,11 @@ try:
                 "has_more": bool(limit > 0 and offset + len(items) < total),
             }
         )
+
+    @routes.get("/prompt_manager/index")
+    async def index_handler(request):
+        """名称 + 分类的轻量全量索引 (不含正文), 给前端名称补全 / 分类缓存用"""
+        return web.json_response({"ok": True, "items": db.list_index()})
 
     @routes.get("/prompt_manager/version")
     async def version_handler(request):

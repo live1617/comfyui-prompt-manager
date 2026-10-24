@@ -8,7 +8,7 @@ import { S } from "./pm-state.js";
 
 let _pmItemsCache = null;
 let _pmItemsCacheFull = false;
-export const PM_VERSION = "1.4.69";
+export const PM_VERSION = "1.4.70";
 
 // 界面上显示的许可证 —— 必须与 pyproject.toml 的 license 一致
 // (v1.4.60 之前设置对话框里写死了 "MIT License", 与实际的 GPL-3.0 不符)
@@ -196,6 +196,21 @@ export function pmCategoryOf(item) {
 export async function pmKnownItems() {
     // 只有在缓存是完整列表时才直接用 (列表对话框分页后缓存可能只是第一页)
     if (_pmItemsCache && _pmItemsCacheFull) return _pmItemsCache;
+    // 新版本: /index 只回 name+category。走 /all 会把 36k 条正文全读出来
+    // (100MB, 实测 ~400ms), 这里走覆盖索引, ~20ms。
+    try {
+        const data = await apiGet("/prompt_manager/index");
+        if (Array.isArray(data.items)) {
+            _pmItemsCache = data.items.map((i) => ({
+                name: i.name,
+                category: pmCategoryOf(i),
+            }));
+            _pmItemsCacheFull = true;
+            return _pmItemsCache;
+        }
+    } catch (e) {
+        // 旧版本没有 /index, 走下面的回退
+    }
     try {
         const data = await apiGet("/prompt_manager/all");
         _pmItemsCache = (data.items || []).map((i) => ({
